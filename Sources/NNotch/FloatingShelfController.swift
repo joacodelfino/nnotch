@@ -113,7 +113,12 @@ private struct FloatingShelfView: View {
                     .foregroundStyle(.white.opacity(0.65))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                SelectableShelfGrid(columnCount: 4, keyboardDelete: true)
+                HStack {
+                    ConfirmingButton(title: "Vaciar", systemImage: "trash") { shelf.removeAll() }
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                SelectableShelfGrid(columnCount: 4)
             }
         }
         .padding(10)
