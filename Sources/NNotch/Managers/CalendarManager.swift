@@ -75,10 +75,7 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var openReminders: [EKReminder] = []
     @Published private(set) var isSyncingExternal = false
     @Published private(set) var externalError: String?
-    @Published private(set) var isGoogleSignedIn = false
-    @Published private(set) var googleConnectedEmail: String?
-
-    let googleSession = GoogleCalendarSession()
+    var hasGoogleAccountOnMac: Bool { macCalendars.contains(where: \.isGoogleAccount) }
 
     @Published var selectedProvider: CalendarProvider {
         didSet {
@@ -102,10 +99,8 @@ final class CalendarManager: ObservableObject {
     }
 
     private var cachedExternalEvents: [CalendarEventItem] = []
-    private var cachedGoogleSessionEvents: [CalendarEventItem] = []
     private let store = EKEventStore()
     private var loading = true
-    private var cancellables: Set<AnyCancellable> = []
     private let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Calendar")
 
     init() {
@@ -119,38 +114,7 @@ final class CalendarManager: ObservableObject {
         }
 
         externalFeeds = Persistence.load([ExternalCalendarFeed].self, from: "calendar_feeds.json") ?? []
-        cachedGoogleSessionEvents = Persistence.load([CalendarEventItem].self, from: "google_session_events.json") ?? []
         loading = false
-
-        isGoogleSignedIn = googleSession.isSignedIn
-        googleConnectedEmail = googleSession.connectedEmail
-
-        googleSession.$isSignedIn
-            .sink { [weak self] signedIn in self?.isGoogleSignedIn = signedIn }
-            .store(in: &cancellables)
-
-        googleSession.$connectedEmail
-            .sink { [weak self] email in self?.googleConnectedEmail = email }
-            .store(in: &cancellables)
-
-        googleSession.$isSyncing
-            .sink { [weak self] syncing in
-                guard let self else { return }
-                self.isSyncingExternal = syncing
-            }
-            .store(in: &cancellables)
-
-        googleSession.onEventsSynced = { [weak self] events, err in
-            guard let self else { return }
-            if let err {
-                self.externalError = err
-            } else {
-                self.externalError = nil
-                self.cachedGoogleSessionEvents = events
-                Persistence.save(events, to: "google_session_events.json")
-            }
-            self.mergeAllEvents()
-        }
 
         NotificationCenter.default.addObserver(
             forName: .EKEventStoreChanged,
@@ -160,7 +124,13 @@ final class CalendarManager: ObservableObject {
             Task { @MainActor in self?.rebuildMacEvents() }
         }
 
-        updateAccessFromSystem()
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
         refresh()
     }
 
@@ -179,20 +149,8 @@ final class CalendarManager: ObservableObject {
     }
 
     var hasGoogleSourceConfigured: Bool {
-        isGoogleSignedIn
-            || macCalendars.contains(where: { $0.isGoogleAccount })
+        hasGoogleAccountOnMac
             || externalFeeds.contains(where: { $0.provider == .google && $0.isEnabled })
-    }
-
-    func signInWithGoogle() {
-        googleSession.startInteractiveSignIn()
-    }
-
-    func signOutFromGoogle() {
-        googleSession.signOut()
-        cachedGoogleSessionEvents = []
-        Persistence.save([CalendarEventItem](), to: "google_session_events.json")
-        mergeAllEvents()
     }
 
     func openMacInternetAccounts() {
@@ -341,11 +299,9 @@ final class CalendarManager: ObservableObject {
     // MARK: - Refresh & Merge
 
     func refresh() {
+        updateAccessFromSystem()
         rebuildMacEvents()
         refreshExternalFeeds()
-        if isGoogleSignedIn {
-            googleSession.syncInBackground()
-        }
         if reminderAccess == .granted {
             let predicate = store.predicateForReminders(in: nil)
             store.fetchReminders(matching: predicate) { [weak self] reminders in
@@ -376,11 +332,9 @@ final class CalendarManager: ObservableObject {
         let ekCalendars = store.calendars(for: .event)
         macCalendars = ekCalendars.map { cal in
             let sourceTitle = cal.source?.title ?? "Mac"
-            let isCalDAV = cal.source?.sourceType == .calDAV
             let isGoogle = sourceTitle.localizedCaseInsensitiveContains("google")
                 || sourceTitle.localizedCaseInsensitiveContains("gmail")
                 || cal.title.localizedCaseInsensitiveContains("@gmail.com")
-                || (isCalDAV && !sourceTitle.localizedCaseInsensitiveContains("icloud"))
             let hex = cal.cgColor.flatMap { Color(cgColor: $0).hexString } ?? (isGoogle ? "#0A84FF" : "#FF375F")
             return MacCalendarSourceInfo(
                 id: cal.calendarIdentifier,
@@ -407,15 +361,13 @@ final class CalendarManager: ObservableObject {
             .filter { !$0.isAllDay || $0.endDate >= start }
             .sorted { $0.startDate < $1.startDate }
 
-        cachedMacEvents = events.prefix(40).map { ev in
+        cachedMacEvents = events.map { ev in
             let cal = ev.calendar as EKCalendar?
             let sourceTitle = cal?.source?.title ?? "Mac"
             let calTitle = cal?.title ?? "Mac"
-            let isCalDAV = cal?.source?.sourceType == .calDAV
             let isGoogle = sourceTitle.localizedCaseInsensitiveContains("google")
                 || sourceTitle.localizedCaseInsensitiveContains("gmail")
                 || calTitle.localizedCaseInsensitiveContains("@gmail.com")
-                || (isCalDAV && !sourceTitle.localizedCaseInsensitiveContains("icloud"))
             let hex = cal?.cgColor.flatMap { Color(cgColor: $0).hexString } ?? (isGoogle ? "#0A84FF" : "#FF375F")
             let provider: CalendarProvider = isGoogle ? .google : .mac
             let meeting = Self.extractMeetingURL(from: [ev.url?.absoluteString, ev.location, ev.notes])
@@ -471,7 +423,7 @@ final class CalendarManager: ObservableObject {
     private func mergeAllEvents() {
         var seenKeys = Set<String>()
         var deduped: [CalendarEventItem] = []
-        let all = (cachedMacEvents + cachedGoogleSessionEvents + cachedExternalEvents)
+        let all = (cachedMacEvents + cachedExternalEvents)
             .sorted { $0.startDate < $1.startDate }
 
         for item in all {

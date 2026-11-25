@@ -40,23 +40,27 @@ struct IslandView: View {
                         lineWidth: 1
                     )
                 )
-                .shadow(
-                    color: .black.opacity(vm.isExpanded ? 0.5 : 0.25),
-                    radius: vm.isExpanded ? 16 : 5,
-                    y: 5
-                )
-            Group {
-                if vm.isExpanded && vm.isContentVisible {
-                    ExpandedView()
-                        .transition(.opacity)
-                } else if !vm.isExpanded {
-                    CollapsedView()
-                        .transition(.opacity)
-                }
-            }
-            .clipShape(shape)
+            // Keep the drop destination mounted while the silhouette animates.
+            // Removing it mid-drag can interrupt SwiftUI's drag session.
+            ExpandedView()
+                .frame(width: vm.expandedSize.width, height: vm.expandedSize.height)
+                .frame(width: islandWidth, height: islandHeight, alignment: .top)
+                .opacity(vm.isExpanded && vm.isContentVisible ? 1 : 0)
+                .allowsHitTesting(vm.isExpanded && vm.isContentVisible)
+                .accessibilityHidden(!vm.isExpanded || !vm.isContentVisible)
+                .animation(nil, value: vm.isContentVisible)
+            CollapsedView()
+                .frame(width: vm.collapsedPillSize.width, height: vm.collapsedPillSize.height)
+                .frame(width: islandWidth, height: islandHeight, alignment: .top)
+                .opacity(vm.isExpanded ? 0 : 1)
+                .allowsHitTesting(!vm.isExpanded)
+                .accessibilityHidden(vm.isExpanded)
+
         }
         .frame(width: islandWidth, height: islandHeight)
+        .clipShape(shape)
+        .shadow(color: .black.opacity(vm.isExpanded ? 0.5 : 0.25),
+                radius: vm.isExpanded ? 16 : 5, y: 5)
         .contentShape(shape)
         // Hover, SwiftUI `.onHover` ile DEĞİL (accessory app'te başka uygulama
         // önplandayken event vermiyor); NotchHostingView'daki .activeAlways
@@ -79,6 +83,10 @@ struct IslandDropDelegate: DropDelegate {
     let vm: NotchViewModel
     let shelf: ShelfManager
 
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .copy)
+    }
+
     func dropEntered(info: DropInfo) {
         MainActor.assumeIsolated {
             vm.isDragHovering = true
@@ -100,6 +108,7 @@ struct IslandDropDelegate: DropDelegate {
         let providers = info.itemProviders(for: [UTType.fileURL, UTType.image, UTType.plainText])
         return MainActor.assumeIsolated {
             vm.isDragHovering = false
+            vm.expand(tab: .shelf)
             return shelf.handle(providers: providers)
         }
     }

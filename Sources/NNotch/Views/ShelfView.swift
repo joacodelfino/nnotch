@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// The file shelf: park files, drag them out, AirDrop them, open or remove them.
 struct ShelfView: View {
     @EnvironmentObject private var shelf: ShelfManager
-    @State private var isTargeted = false
+    @EnvironmentObject private var vm: NotchViewModel
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
 
@@ -32,7 +32,7 @@ struct ShelfView: View {
                     Spacer()
                     Image(systemName: "tray.and.arrow.down.fill")
                         .font(.system(size: 30))
-                        .foregroundStyle(isTargeted ? Color.orange : .white.opacity(0.2))
+                        .foregroundStyle(vm.isDragHovering ? Color.orange : .white.opacity(0.2))
                     Text("Arrastrá archivos al notch y soltalos acá")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white.opacity(0.5))
@@ -56,9 +56,7 @@ struct ShelfView: View {
             }
         }
         .islandCard()
-        .onDrop(of: [UTType.fileURL, UTType.image, UTType.plainText], isTargeted: $isTargeted) { providers in
-            shelf.handle(providers: providers)
-        }
+
     }
 }
 

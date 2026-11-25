@@ -24,10 +24,9 @@ struct CalendarTabView: View {
             }
         }
         .islandCard()
-        .onAppear {
-            if calendar.eventAccess == .granted || calendar.reminderAccess == .granted || !calendar.externalFeeds.isEmpty {
-                calendar.refresh()
-            }
+        .onAppear { calendar.refresh() }
+        .onChange(of: vm.isExpanded) { _, expanded in
+            if expanded { calendar.refresh() }
         }
     }
 
@@ -152,7 +151,7 @@ struct CalendarTabView: View {
                 title: "Conectá cualquier calendario (.ics)",
                 subtitle: "Agregá un link iCal (.ics) de Outlook, Teams, Notion Calendar, facultad o trabajo."
             )
-        case .all where calendar.eventAccess != .granted && !calendar.isGoogleSignedIn && calendar.externalFeeds.isEmpty:
+        case .all where calendar.eventAccess != .granted && !calendar.hasGoogleAccountOnMac && calendar.externalFeeds.isEmpty:
             macPermissionRequestView
         default:
             VStack(alignment: .leading, spacing: 6) {
@@ -163,7 +162,8 @@ struct CalendarTabView: View {
                         Text(err)
                             .font(.system(size: 8.5))
                             .foregroundStyle(.orange)
-                            .lineLimit(1)
+                            .lineLimit(3)
+                            .help(err)
                     }
                 }
 
@@ -245,58 +245,23 @@ struct CalendarTabView: View {
 
     private var configPanel: some View {
         HStack(alignment: .top, spacing: 14) {
-            // Columna izquierda: Cuenta de Google directa + links .ics opcionales
+            // Cuenta de Google mediante macOS y links .ics opcionales
             VStack(alignment: .leading, spacing: 7) {
                 CardTitle("Cuenta de Google", symbol: "globe", tint: .blue)
 
-                if calendar.isGoogleSignedIn {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.green)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(calendar.googleConnectedEmail ?? "Cuenta de Google conectada")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                            Text("Sesión activa · sincronización automática")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white.opacity(0.45))
-                        }
-                        Spacer()
-                        Button("Cerrar sesión") {
-                            calendar.signOutFromGoogle()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.1)))
-                } else {
-                    HStack(spacing: 8) {
-                        Button {
-                            vm.collapseNow()
-                            calendar.signInWithGoogle()
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "person.crop.circle.badge.checkmark")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text("Iniciar sesión con Google")
-                                    .font(.caption.weight(.semibold))
-                            }
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(prefs.accentColor))
-                        }
-                        .buttonStyle(.plain)
-
-                        Button("Cuentas de macOS…") {
-                            calendar.openMacInternetAccounts()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    }
+                Text(calendar.hasGoogleAccountOnMac
+                     ? "Google conectado mediante macOS. Elegí los calendarios de la lista."
+                     : "Agregá Google en Cuentas de Internet y activá Calendarios. Después permití el acceso a nnotch.")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.65))
+                Button("Cuentas de macOS…") {
+                    vm.collapseNow()
+                    calendar.openMacInternetAccounts()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                if calendar.eventAccess != .granted {
+                    calendarAccessButton
                 }
 
                 Divider().overlay(Color.white.opacity(0.08))
@@ -453,16 +418,30 @@ struct CalendarTabView: View {
 
     // MARK: - Prompts & Rows
 
+    private var calendarAccessButton: some View {
+        Button(calendar.eventAccess == .denied ? "Permisos de Calendario…" : "Permitir acceso") {
+            if calendar.eventAccess == .denied {
+                vm.collapseNow()
+                SystemSettingsPane.calendars.open()
+            } else {
+                calendar.requestAccessAndRefresh()
+            }
+        }
+        .foregroundStyle(.white)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
     private var googleSignInPrompt: some View {
         VStack(spacing: 9) {
             Spacer()
             Image(systemName: "person.crop.circle.badge.checkmark")
                 .font(.system(size: 26))
                 .foregroundStyle(.blue)
-            Text("Iniciá sesión en tu cuenta de Google")
+            Text("Conectá Google mediante macOS")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.9))
-            Text("Logueate una sola vez con tu mail de Google y tus calendarios quedan vinculados automáticamente.")
+            Text("En Cuentas de Internet, agregá Google y activá Calendarios. Luego permití el acceso a nnotch. La sesión web anterior no conecta los eventos.")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.45))
                 .multilineTextAlignment(.center)
@@ -470,23 +449,21 @@ struct CalendarTabView: View {
             HStack(spacing: 8) {
                 Button {
                     vm.collapseNow()
-                    calendar.signInWithGoogle()
+                    calendar.openMacInternetAccounts()
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "globe")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("Iniciar sesión con Google")
+                        Text("Conectar Google en macOS")
                             .font(.caption.weight(.semibold))
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
 
-                Button("Cuentas de macOS…") {
-                    calendar.openMacInternetAccounts()
+                if calendar.eventAccess != .granted {
+                    calendarAccessButton
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
             Spacer()
         }
@@ -499,22 +476,18 @@ struct CalendarTabView: View {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.system(size: 26))
                 .foregroundStyle(.white.opacity(0.3))
-            Text("Iniciá sesión con Google o activá el Calendario de Mac")
+            Text("Conectá tu cuenta y permití el acceso al calendario")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.white.opacity(0.75))
             HStack(spacing: 8) {
-                Button("Iniciar sesión con Google") {
+                Button("Conectar Google en macOS") {
                     vm.collapseNow()
-                    calendar.signInWithGoogle()
+                    calendar.openMacInternetAccounts()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
 
-                Button("Permitir Calendario de Mac") {
-                    calendar.requestAccessAndRefresh()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                calendarAccessButton
             }
             Spacer()
         }
