@@ -45,7 +45,7 @@ final class FloatingShelfController {
             if event.type == .leftMouseDown {
                 dismissWork?.cancel()
                 itemCountAtDragStart = shelf.items.count
-            } else if event.type == .leftMouseUp, triggered, shelf.items.count == itemCountAtDragStart {
+            } else if event.type == .leftMouseUp, triggered, itemCountAtDragStart == 0, shelf.items.isEmpty {
                 let work = DispatchWorkItem { [weak self] in self?.panel?.orderOut(nil) }
                 dismissWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
