@@ -49,3 +49,7 @@ Con nnotch en ejecución y el módulo Calendario habilitado, el notch se abre al
 - En **Cuentas → Probar aviso** podés comprobar la presentación sin crear eventos en tu calendario.
 
 Las pruebas de fechas, cambios de horario y programación de avisos se ejecutan con `bash scripts/test-calendar.sh`.
+
+## Bandeja flotante
+
+Mientras arrastrás archivos desde Finder, sacudí el mouse de izquierda a derecha varias veces rápidamente: aparece una bandeja cerca del cursor. Soltá los archivos allí y después arrastralos a otra app. Comparte el contenido con la Bandeja del notch; cerrar la ventana no elimina los archivos. El gesto requiere el módulo Bandeja habilitado. También podés abrirla desde el menú de nnotch → **Abrir bandeja flotante**.

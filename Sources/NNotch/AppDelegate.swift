@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let calendar = CalendarManager()
 
     private var windowController: NotchWindowController?
+    private var floatingShelf: FloatingShelfController?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
@@ -42,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calendar.onEventsStarting = { [weak self] events in
             self?.viewModel.showCalendarAlerts(events)
         }
+        floatingShelf = FloatingShelfController(shelf: shelf)
         setupStatusItem()
         setupEventMonitors()
         observePreferences()
@@ -80,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        floatingShelf?.stop()
         if let monitor = globalClickMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
         if prefs.clearShelfOnQuit {
@@ -139,12 +142,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quit = NSMenuItem(title: "Salir", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(open)
+        let floating = NSMenuItem(title: "Abrir bandeja flotante", action: #selector(openFloatingShelf), keyEquivalent: "")
+        floating.target = self
+        menu.addItem(floating)
         menu.addItem(settings)
         menu.addItem(.separator())
         menu.addItem(quit)
         item.menu = menu
         statusItem = item
     }
+
+    @objc private func openFloatingShelf() { floatingShelf?.show() }
 
     @objc private func expandIsland() {
         viewModel.expand(tab: .home)
