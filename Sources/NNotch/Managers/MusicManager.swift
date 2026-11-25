@@ -1045,7 +1045,9 @@ final class MusicManager: ObservableObject {
 
     private func control(_ playback: Playback) {
         guard let playing = nowPlaying else {
-            _ = Self.sendMediaRemoteCommand(playback.mediaRemoteCommand)
+            if !Self.sendMediaRemoteCommand(playback.mediaRemoteCommand) {
+                Self.postMediaKey(playback.mediaKey)
+            }
             return
         }
 
@@ -1289,7 +1291,9 @@ final class MusicManager: ObservableObject {
         case .next:
             return """
             (function(){
-              var b = document.querySelector('[data-testid="control-button-skip-forward"], .ytp-next-button, .skipControl__next');
+              var b = Array.from(document.querySelectorAll('[data-testid="control-button-skip-forward"], ytmusic-player-bar .next-button, .ytp-next-button, .skipControl__next')).find(function(e) {
+                return !e.disabled && e.getAttribute("aria-disabled") !== "true" && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+              });
               if (b) { b.click(); return 'ok'; }
               return 'missing';
             })()
@@ -1297,10 +1301,10 @@ final class MusicManager: ObservableObject {
         case .previous:
             return """
             (function(){
-              var b = document.querySelector('[data-testid="control-button-skip-back"], .ytp-prev-button, .skipControl__previous');
-              if (b && b.offsetParent !== null) { b.click(); return 'ok'; }
-              var m = document.querySelector('video,audio');
-              if (m) { m.currentTime = 0; return 'ok'; }
+              var b = Array.from(document.querySelectorAll('[data-testid="control-button-skip-back"], ytmusic-player-bar .previous-button, .ytp-prev-button, .skipControl__previous')).find(function(e) {
+                return !e.disabled && e.getAttribute("aria-disabled") !== "true" && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+              });
+              if (b) { b.click(); return 'ok'; }
               return 'missing';
             })()
             """
