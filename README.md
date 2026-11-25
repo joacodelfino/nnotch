@@ -31,9 +31,9 @@ El bundle compilado queda en `build/nnotch.app`.
 
 ## Conectar Google Calendar
 
-1. En nnotch → Calendario → Google, abrí **Conectar Google en macOS**.
-2. En Cuentas de Internet, agregá tu cuenta de Google y activá **Calendarios**.
-3. Volvé a nnotch y seleccioná **Permitir acceso**. Si antes lo denegaste, habilitá nnotch en Privacidad y seguridad → Calendarios.
+1. En nnotch → Calendario → Google, tocá **Permitir Calendario a nnotch** y autorizá el acceso en el diálogo de macOS. Si antes lo denegaste, habilitá nnotch en Privacidad y seguridad → Calendarios.
+2. Si ya tenés Google en macOS con **Calendarios** activado, no necesitás agregarlo otra vez.
+3. Si todavía no lo agregaste, abrí **Cuentas de Internet**, agregá Google y activá **Calendarios**. Luego volvé a nnotch.
 4. En **Cuentas**, elegí los calendarios que querés mostrar. Se muestran los eventos de los próximos 14 días.
 
 La sesión web de versiones anteriores no daba acceso fiable a los eventos y ya no se utiliza. Las cuentas con nombre Google o Gmail se detectan automáticamente; si tu cuenta de trabajo tiene otro nombre, sus eventos siguen disponibles en **Todos** o **Mac**.

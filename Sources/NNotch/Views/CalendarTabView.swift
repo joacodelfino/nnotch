@@ -143,6 +143,8 @@ struct CalendarTabView: View {
             macPermissionRequestView
         case .mac where calendar.eventAccess == .denied:
             macPermissionDeniedView
+        case .google where calendar.eventAccess != .granted && !calendar.hasGoogleSourceConfigured:
+            macPermissionRequestView
         case .google where !calendar.hasGoogleSourceConfigured && calendar.filteredEvents.isEmpty:
             googleSignInPrompt
         case .custom where !calendar.hasCustomSourceConfigured && calendar.filteredEvents.isEmpty:
@@ -203,7 +205,7 @@ struct CalendarTabView: View {
                         .foregroundStyle(.white.opacity(0.45))
                         .multilineTextAlignment(.center)
                     Button("Dar permiso") {
-                        calendar.requestAccessAndRefresh()
+                        calendar.requestRemindersAccessAndRefresh()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.mini)
@@ -254,7 +256,7 @@ struct CalendarTabView: View {
                      : "Agregá Google en Cuentas de Internet y activá Calendarios. Después permití el acceso a nnotch.")
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.65))
-                Button("Cuentas de macOS…") {
+                Button("Abrir Cuentas de Internet…") {
                     vm.collapseNow()
                     calendar.openMacInternetAccounts()
                 }
@@ -346,7 +348,7 @@ struct CalendarTabView: View {
                     Spacer()
                     if calendar.eventAccess != .granted {
                         Button("Conectar Mac") {
-                            calendar.requestAccessAndRefresh()
+                            calendar.requestCalendarAccessAndRefresh()
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.mini)
@@ -419,16 +421,18 @@ struct CalendarTabView: View {
     // MARK: - Prompts & Rows
 
     private var calendarAccessButton: some View {
-        Button(calendar.eventAccess == .denied ? "Permisos de Calendario…" : "Permitir acceso") {
+        Button(calendar.eventAccess == .denied ? "Habilitar permiso en Ajustes…" : "Permitir Calendario a nnotch") {
             if calendar.eventAccess == .denied {
                 vm.collapseNow()
                 SystemSettingsPane.calendars.open()
             } else {
-                calendar.requestAccessAndRefresh()
+                vm.collapseNow()
+                NSApp.activate(ignoringOtherApps: true)
+                calendar.requestCalendarAccessAndRefresh()
             }
         }
         .foregroundStyle(.white)
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderedProminent)
         .controlSize(.small)
     }
 
@@ -454,7 +458,7 @@ struct CalendarTabView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "globe")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("Conectar Google en macOS")
+                        Text("Abrir Cuentas de Internet…")
                             .font(.caption.weight(.semibold))
                     }
                 }
@@ -471,24 +475,30 @@ struct CalendarTabView: View {
     }
 
     private var macPermissionRequestView: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Spacer()
             Image(systemName: "calendar.badge.checkmark")
                 .font(.system(size: 26))
-                .foregroundStyle(.white.opacity(0.3))
-            Text("Conectá tu cuenta y permití el acceso al calendario")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.white.opacity(0.75))
-            HStack(spacing: 8) {
-                Button("Conectar Google en macOS") {
-                    vm.collapseNow()
-                    calendar.openMacInternetAccounts()
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-
-                calendarAccessButton
+                .foregroundStyle(.blue)
+            Text("Primero, permití el acceso al calendario")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+            Text("nnotch necesita tu permiso para detectar las cuentas de macOS. Si ya agregaste Google y activaste Calendarios, no tenés que conectar la cuenta otra vez.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.65))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+            calendarAccessButton
+            Text("Solo si todavía no agregaste tu cuenta:")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.45))
+            Button("Abrir Cuentas de Internet…") {
+                vm.collapseNow()
+                calendar.openMacInternetAccounts()
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.blue)
+            .font(.caption)
             Spacer()
         }
         .frame(maxWidth: .infinity)

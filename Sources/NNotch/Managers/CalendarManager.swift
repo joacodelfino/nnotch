@@ -252,11 +252,17 @@ final class CalendarManager: ObservableObject {
         }
     }
 
+    func requestCalendarAccessAndRefresh() {
+        requestEventAccess { [weak self] in self?.refresh() }
+    }
+
+    func requestRemindersAccessAndRefresh() {
+        requestReminderAccess { [weak self] in self?.refresh() }
+    }
+
     func requestAccessAndRefresh() {
         requestEventAccess { [weak self] in
-            self?.requestReminderAccess {
-                self?.refresh()
-            }
+            self?.requestReminderAccess { self?.refresh() }
         }
     }
 
