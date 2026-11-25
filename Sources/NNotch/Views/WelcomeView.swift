@@ -16,7 +16,7 @@ struct WelcomeView: View {
                 .frame(width: 76, height: 52)
 
             VStack(spacing: 4) {
-                Text("Bienvenido a JNotch")
+                Text("Bienvenido a nnotch")
                     .font(.title3.weight(.bold))
                 Text("Vive arriba de todo en tu pantalla, integrado en el notch.")
                     .font(.callout)

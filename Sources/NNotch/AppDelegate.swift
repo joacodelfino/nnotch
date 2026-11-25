@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let window = NSWindow(contentViewController: controller)
         window.styleMask = [.titled, .closable, .fullSizeContentView]
-        window.title = "Bienvenido a JNotch"
+        window.title = "Bienvenido a nnotch"
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.delegate = self
@@ -125,11 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = item.button {
             button.image = NSImage(
                 systemSymbolName: "sparkles.rectangle.stack",
-                accessibilityDescription: "JNotch"
+                accessibilityDescription: "nnotch"
             )
         }
         let menu = NSMenu()
-        let open = NSMenuItem(title: "Abrir JNotch", action: #selector(expandIsland), keyEquivalent: "o")
+        let open = NSMenuItem(title: "Abrir nnotch", action: #selector(expandIsland), keyEquivalent: "o")
         open.target = self
         let settings = NSMenuItem(title: "Ajustes…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
@@ -160,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let window = NSWindow(contentViewController: controller)
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.setContentSize(NSSize(width: 720, height: 520))
-            window.title = "Ajustes de JNotch"
+            window.title = "Ajustes de nnotch"
             window.isMovableByWindowBackground = false
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: .darkAqua)

@@ -1,7 +1,7 @@
 import AppKit
 
 @main
-struct JNotchApp {
+struct NNotchApp {
     @MainActor static var delegate: AppDelegate?
     @MainActor static var appNapToken: NSObjectProtocol?
 
@@ -10,7 +10,7 @@ struct JNotchApp {
         ProcessInfo.processInfo.disableAutomaticTermination("Utilidad activa permanente en el notch")
         appNapToken = ProcessInfo.processInfo.beginActivity(
             options: .userInitiatedAllowingIdleSystemSleep,
-            reason: "Mantener actualizados los widgets de JNotch"
+            reason: "Mantener actualizados los widgets de nnotch"
         )
 
         let app = NSApplication.shared

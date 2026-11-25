@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "JNotch",
+    name: "NNotch",
     platforms: [
         .macOS(.v14)
     ],
     targets: [
         .executableTarget(
-            name: "JNotch",
-            path: "Sources/JNotch"
+            name: "NNotch",
+            path: "Sources/NNotch"
         )
     ]
 )

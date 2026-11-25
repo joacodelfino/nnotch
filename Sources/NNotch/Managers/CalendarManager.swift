@@ -15,7 +15,7 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var openReminders: [EKReminder] = []
 
     private let store = EKEventStore()
-    private let log = Logger(subsystem: "com.joacodelfino.jnotch", category: "Calendar")
+    private let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Calendar")
 
     init() {
         updateAccessFromSystem()

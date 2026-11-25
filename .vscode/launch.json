@@ -4,21 +4,21 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:jnotch}",
-            "name": "Debug JNotch",
-            "target": "JNotch",
+            "cwd": "${workspaceFolder}",
+            "name": "Debug nnotch",
+            "target": "NNotch",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug JNotch"
+            "preLaunchTask": "swift: Build Debug NNotch"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:jnotch}",
-            "name": "Release JNotch",
-            "target": "JNotch",
+            "cwd": "${workspaceFolder}",
+            "name": "Release nnotch",
+            "target": "NNotch",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release JNotch"
+            "preLaunchTask": "swift: Build Release NNotch"
         }
     ]
 }

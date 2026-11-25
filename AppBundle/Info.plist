@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>JNotch</string>
+	<string>nnotch</string>
 	<key>CFBundleDisplayName</key>
-	<string>JNotch</string>
+	<string>nnotch</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.joacodelfino.jnotch</string>
+	<string>com.joacodelfino.nnotch</string>
 	<key>CFBundleExecutable</key>
-	<string>JNotch</string>
+	<string>nnotch</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -21,7 +21,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSPrincipalClass</key>
@@ -29,7 +29,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Se usa para mostrar y controlar la música en reproducción de Apple Music y Spotify.</string>
+	<string>Se usa para mostrar y controlar el audio y multimedia de tus reproductores y navegadores.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Accede a tu calendario para mostrar los eventos del día en el notch.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

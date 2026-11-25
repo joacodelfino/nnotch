@@ -34,12 +34,12 @@ final class MusicManager: ObservableObject {
     private var timer: Timer?
     private var pollInFlight = false
     private var lastArtworkKey = ""
-    private let scriptQueue = DispatchQueue(label: "jnotch.music", qos: .utility)
+    private let scriptQueue = DispatchQueue(label: "nnotch.music", qos: .utility)
     private let artworkCache = NSCache<NSString, NSImage>()
     nonisolated(unsafe) private static let ytMetaCache = NSCache<NSString, NSDictionary>()
     private var seekGeneration = 0
     private var lastSeek: (trackKey: String, position: Double, generation: Int)?
-    nonisolated private static let log = Logger(subsystem: "com.joacodelfino.jnotch", category: "Music")
+    nonisolated private static let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Music")
 
     private let activeInterval: TimeInterval = 1.5
     private let idleInterval: TimeInterval = 4.0
@@ -80,7 +80,7 @@ final class MusicManager: ObservableObject {
         "com.apple.loginwindow",
         "com.apple.finder",
         "com.apple.NotificationCenter",
-        "com.joacodelfino.jnotch",
+        "com.joacodelfino.nnotch",
     ]
 
     init() {

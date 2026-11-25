@@ -2,11 +2,11 @@ import Foundation
 import os
 
 enum Persistence {
-    private static let log = Logger(subsystem: "com.joacodelfino.jnotch", category: "Persistence")
+    private static let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Persistence")
 
     static let appSupportURL: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent("JNotch", isDirectory: true)
+        let dir = base.appendingPathComponent("nnotch", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {

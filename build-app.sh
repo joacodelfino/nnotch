@@ -1,5 +1,5 @@
 #!/bin/bash
-# Compila JNotch.app sin requerir Xcode completo.
+# Compila nnotch.app sin requerir Xcode completo.
 # Uso: ./build-app.sh [--run]
 set -euo pipefail
 
@@ -16,17 +16,17 @@ if [[ "$SDK_PATH" == /Library/Developer/CommandLineTools/* ]] \
     SDK_PATH="$FALLBACK_SDK"
 fi
 
-MODULE_CACHE="${TMPDIR:-/tmp}/jnotch-module-cache"
+MODULE_CACHE="${TMPDIR:-/tmp}/nnotch-module-cache"
 mkdir -p .build/release "$MODULE_CACHE"
 
-APP="build/JNotch.app"
-BIN=".build/release/JNotch"
+APP="build/nnotch.app"
+BIN=".build/release/NNotch"
 
-echo "▸ Compilando JNotch (release)…"
+echo "▸ Compilando nnotch (release)…"
 SOURCES=()
 while IFS= read -r file; do
     SOURCES+=("$file")
-done < <(find Sources/JNotch -name '*.swift' | sort)
+done < <(find Sources/NNotch -name '*.swift' | sort)
 
 swiftc \
     -O -whole-module-optimization \
@@ -40,7 +40,7 @@ swiftc \
 echo "▸ Armando bundle: $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/JNotch"
+cp "$BIN" "$APP/Contents/MacOS/nnotch"
 cp AppBundle/Info.plist "$APP/Contents/Info.plist"
 cp AppBundle/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
@@ -49,8 +49,8 @@ codesign --force --sign - "$APP"
 
 echo "✓ Listo: $APP"
 if [[ "${1:-}" == "--run" ]]; then
-    echo "▸ Reiniciando JNotch…"
-    pkill -f "JNotch.app/Contents/MacOS/JNotch" 2>/dev/null || killall JNotch 2>/dev/null || true
+    echo "▸ Reiniciando nnotch…"
+    killall nnotch 2>/dev/null || killall n-notch 2>/dev/null || killall JNotch 2>/dev/null || true
     sleep 0.3
     open "$APP"
 fi

@@ -69,7 +69,7 @@ struct SettingsView: View {
                 MiniIslandGlyph(tint: prefs.accentColor)
                     .frame(width: 36, height: 25)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("JNotch")
+                    Text("nnotch")
                         .font(.headline)
                         .foregroundStyle(.white)
                     Text("v\(AppInfo.version)")
@@ -100,7 +100,7 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "power")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Salir de JNotch")
+                    Text("Salir de nnotch")
                         .font(.caption.weight(.medium))
                     Spacer()
                 }
@@ -179,7 +179,7 @@ private struct GeneralSettings: View {
         VStack(alignment: .leading, spacing: 14) {
             SettingsCard("Inicio del Sistema") {
                 SettingsToggleRow(
-                    title: "Iniciar JNotch al abrir sesión",
+                    title: "Iniciar nnotch al abrir sesión",
                     subtitle: "Arranca automáticamente en segundo plano al encender la Mac.",
                     isOn: $launchAtLogin
                 )
@@ -346,7 +346,7 @@ private struct AppearanceSettings: View {
             SettingsCard("Monitores Externos") {
                 SettingsToggleRow(
                     title: "Mostrar en pantallas sin notch físico",
-                    subtitle: "Si lo apagás, JNotch solo aparece en la pantalla integrada de la MacBook.",
+                    subtitle: "Si lo apagás, nnotch solo aparece en la pantalla integrada de la MacBook.",
                     isOn: $prefs.showOnNotchlessScreens
                 )
             }
@@ -450,7 +450,7 @@ private struct DataSettings: View {
 
             SettingsCard("Bandeja de Archivos") {
                 SettingsToggleRow(
-                    title: "Vaciar bandeja al salir de JNotch",
+                    title: "Vaciar bandeja al salir de nnotch",
                     subtitle: "Borra automáticamente los archivos temporales al cerrar la app.",
                     isOn: $prefs.clearShelfOnQuit
                 )
@@ -484,12 +484,12 @@ private struct AboutSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsCard("JNotch") {
+            SettingsCard("nnotch") {
                 HStack(spacing: 12) {
                     MiniIslandGlyph(tint: prefs.accentColor)
                         .frame(width: 48, height: 34)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("JNotch v\(AppInfo.version)")
+                        Text("nnotch v\(AppInfo.version)")
                             .font(.callout.weight(.semibold))
                             .foregroundStyle(.white)
                         Text("Centro de control nativo y modular en el notch")
@@ -503,9 +503,9 @@ private struct AboutSettings: View {
             }
 
             SettingsCard("Repositorio") {
-                Link(destination: URL(string: "https://github.com/joacodelfino/j-notch")!) {
+                Link(destination: URL(string: "https://github.com/joacodelfino/nnotch")!) {
                     HStack {
-                        Label("github.com/joacodelfino/j-notch", systemImage: "link")
+                        Label("github.com/joacodelfino/nnotch", systemImage: "link")
                             .font(.caption)
                             .foregroundStyle(prefs.accentColor)
                         Spacer()
@@ -935,7 +935,7 @@ struct SettingsQuickView: View {
 
             HStack(spacing: 8) {
                 Button {
-                    JNotchApp.delegate?.openSettings()
+                    NNotchApp.delegate?.openSettings()
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "macwindow")

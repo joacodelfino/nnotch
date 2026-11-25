@@ -63,7 +63,7 @@ struct MusicCard: View {
                     Text("Se requiere permiso de Automatización")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white.opacity(0.5))
-                    Text("Permití a JNotch leer el estado de reproducción")
+                    Text("Permití a nnotch leer el estado de reproducción")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.3))
                         .multilineTextAlignment(.center)

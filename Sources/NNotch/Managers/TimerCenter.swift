@@ -123,7 +123,7 @@ final class TimerCenter: ObservableObject {
     private func postNotification(_ message: String) {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
-        content.title = "JNotch"
+        content.title = "nnotch"
         content.body = message
         // Ses zaten NSSound ile çalınıyor; bildirim sessiz kalsın (çift ses olmasın).
         UNUserNotificationCenter.current().add(
