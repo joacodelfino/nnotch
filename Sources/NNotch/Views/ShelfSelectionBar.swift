@@ -15,9 +15,11 @@ struct ShelfSelectionBar: View {
             .font(.caption2)
             Spacer(minLength: 0)
             if !shelf.selectedItems.isEmpty {
-                ShelfBatchDrag(urls: shelf.selectedItems.map(\.storedURL))
-                    .frame(width: 110, height: 24)
-                    .help("Arrastrá desde acá para llevar todos los seleccionados")
+                if shelf.selectedItems.count > 1 {
+                    ShelfBatchDrag(urls: shelf.selectedItems.map(\.storedURL))
+                        .frame(width: 110, height: 24)
+                        .help("Arrastrá desde acá para llevar todos los seleccionados")
+                }
                 ConfirmingButton(title: "Quitar", systemImage: "trash") {
                     for item in shelf.selectedItems { shelf.remove(item) }
                 }
