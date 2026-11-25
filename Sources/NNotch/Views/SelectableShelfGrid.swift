@@ -11,6 +11,7 @@ private struct ShelfFramesKey: PreferenceKey {
 struct SelectableShelfGrid: View {
     @EnvironmentObject private var shelf: ShelfManager
     let columnCount: Int
+    var keyboardDelete = false
     @State private var frames: [UUID: CGRect] = [:]
     @State private var selectionRect: CGRect?
     @State private var initialSelection: Set<UUID> = []
@@ -43,6 +44,13 @@ struct SelectableShelfGrid: View {
             }
             .coordinateSpace(name: "shelfSelection")
             .onPreferenceChange(ShelfFramesKey.self) { frames = $0 }
+            .background {
+                if keyboardDelete {
+                    ShelfDeleteKeyHandler {
+                        for item in shelf.selectedItems { shelf.remove(item) }
+                    }
+                }
+            }
             .simultaneousGesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("shelfSelection"))
                 .onChanged { value in
                     if !selecting && !ignored {
@@ -64,6 +72,26 @@ struct SelectableShelfGrid: View {
                     ignored = false
                     selectionRect = nil
                 })
+        }
+    }
+}
+
+private struct ShelfDeleteKeyHandler: NSViewRepresentable {
+    let onDelete: () -> Void
+    func makeNSView(context: Context) -> NSView { DeleteKeyView(onDelete: onDelete) }
+    func updateNSView(_ view: NSView, context: Context) {
+        (view as? DeleteKeyView)?.onDelete = onDelete
+    }
+
+    private final class DeleteKeyView: NSView {
+        var onDelete: () -> Void
+        init(onDelete: @escaping () -> Void) { self.onDelete = onDelete; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { nil }
+        override var acceptsFirstResponder: Bool { true }
+        override func viewDidMoveToWindow() { window?.makeFirstResponder(self) }
+        override func keyDown(with event: NSEvent) {
+            if event.keyCode == 51 || event.keyCode == 117 { onDelete() }
+            else { super.keyDown(with: event) }
         }
     }
 }

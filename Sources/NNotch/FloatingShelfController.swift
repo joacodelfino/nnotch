@@ -57,8 +57,7 @@ final class FloatingShelfController {
     func show() {
         if panel == nil {
             let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 340, height: 260),
-                                 styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
-            window.title = "Bandeja flotante"
+                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             window.standardWindowButton(.closeButton)?.isHidden = true
             window.standardWindowButton(.miniaturizeButton)?.isHidden = true
             window.standardWindowButton(.zoomButton)?.isHidden = true
@@ -89,22 +88,16 @@ private struct FloatingShelfView: View {
     @State private var targeted = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            Label(targeted ? "Soltá los archivos acá" : "Bandeja · \(shelf.items.count)", systemImage: "tray.and.arrow.down")
-                .font(.headline)
+        VStack(spacing: 8) {
             if shelf.items.isEmpty {
-                Spacer()
                 Image(systemName: "tray.and.arrow.down.fill").font(.system(size: 36))
-                Text("Soltá archivos y después arrastralos a otra app")
+                Text("Soltá archivos acá")
                     .font(.callout).multilineTextAlignment(.center)
-                Spacer()
             } else {
-                ShelfSelectionBar()
-                ConfirmingButton(title: "Vaciar bandeja", systemImage: "trash") { shelf.removeAll() }
-                SelectableShelfGrid(columnCount: 4)
+                SelectableShelfGrid(columnCount: 4, keyboardDelete: true)
             }
         }
-        .padding(16)
+        .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(targeted ? Color.orange.opacity(0.2) : Color.black.opacity(0.15))
         .contentShape(Rectangle())
