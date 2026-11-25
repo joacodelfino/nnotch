@@ -18,6 +18,13 @@ struct ShelfItem: Identifiable, Codable, Equatable {
 final class ShelfManager: ObservableObject {
     @Published private(set) var items: [ShelfItem] = []
 
+    @Published var selectedIDs: Set<UUID> = []
+    var selectedItems: [ShelfItem] { items.filter { selectedIDs.contains($0.id) } }
+
+    func toggleSelection(_ item: ShelfItem) {
+        if !selectedIDs.insert(item.id).inserted { selectedIDs.remove(item.id) }
+    }
+
     private let shelfDir = Persistence.directory("Shelf")
 
     init() {
@@ -139,12 +146,14 @@ final class ShelfManager: ObservableObject {
     }
 
     func remove(_ item: ShelfItem) {
+        selectedIDs.remove(item.id)
         items.removeAll { $0.id == item.id }
         try? FileManager.default.removeItem(at: item.storedURL.deletingLastPathComponent())
         persist()
     }
 
     func removeAll() {
+        selectedIDs.removeAll()
         for item in items {
             try? FileManager.default.removeItem(at: item.storedURL.deletingLastPathComponent())
         }

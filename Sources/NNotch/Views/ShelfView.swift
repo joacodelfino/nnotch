@@ -27,6 +27,7 @@ struct ShelfView: View {
                     }
                 }
             }
+            if !shelf.items.isEmpty { ShelfSelectionBar() }
             if shelf.items.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
@@ -91,6 +92,16 @@ struct ShelfItemView: View {
                     .padding(4)
             }
         }
+        .overlay(alignment: .topLeading) {
+            Button { shelf.toggleSelection(item) } label: {
+                Image(systemName: shelf.selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(shelf.selectedIDs.contains(item.id) ? Color.orange : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(3)
+            .help("Seleccionar archivo")
+        }
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(shelf.selectedIDs.contains(item.id) ? Color.orange : .clear))
         .onHover { hovering = $0 }
         .animation(Motion.quick, value: hovering)
         .onDrag {

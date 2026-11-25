@@ -90,6 +90,8 @@ private struct FloatingShelfView: View {
                     .font(.callout).multilineTextAlignment(.center)
                 Spacer()
             } else {
+                ShelfSelectionBar()
+                ConfirmingButton(title: "Vaciar bandeja", systemImage: "trash") { shelf.removeAll() }
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
                         ForEach(shelf.items) { ShelfItemView(item: $0) }
