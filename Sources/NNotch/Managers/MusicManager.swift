@@ -17,6 +17,7 @@ struct NowPlaying: Equatable {
     var webBrowserApp: String? = nil
     var webWindowIndex: Int? = nil
     var webTabIndex: Int? = nil
+    var webTabURL: String? = nil
 
     var trackKey: String { "\(sourceLabel)|\(title)|\(artist)|\(artworkURL ?? "")" }
 }
@@ -39,6 +40,11 @@ final class MusicManager: ObservableObject {
     nonisolated(unsafe) private static let ytMetaCache = NSCache<NSString, NSDictionary>()
     private var seekGeneration = 0
     private var lastSeek: (trackKey: String, position: Double, generation: Int)?
+    /// Evita que el drenaje del buffer de CoreAudio (~0.8s al pausar en Safari/Brave) pise el estado recién alternado.
+    private var manualPlayStateOverride: (isPlaying: Bool, until: Date)?
+    /// Historial de URLs de YouTube reproducidas para que el botón "Anterior" vuelva al video previo.
+    private var youtubeHistoryStack: [String] = []
+    private var visitedYouTubeIDs: [String] = []
     nonisolated private static let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Music")
 
     private let activeInterval: TimeInterval = 1.5
@@ -314,6 +320,32 @@ final class MusicManager: ObservableObject {
                     f.position = s.position
                     final = f
                 }
+                if let override = self.manualPlayStateOverride {
+                    if Date() < override.until {
+                        final?.isPlaying = override.isPlaying
+                    } else {
+                        self.manualPlayStateOverride = nil
+                    }
+                }
+                if let prevURL = self.nowPlaying?.webTabURL,
+                   let newURL = final?.webTabURL,
+                   prevURL != newURL,
+                   Self.extractYouTubeID(from: prevURL) != nil {
+                    if self.youtubeHistoryStack.last != prevURL {
+                        self.youtubeHistoryStack.append(prevURL)
+                        if self.youtubeHistoryStack.count > 25 {
+                            self.youtubeHistoryStack.removeFirst()
+                        }
+                    }
+                }
+                if let ytID = final?.webTabURL.flatMap({ Self.extractYouTubeID(from: $0) }) {
+                    if !self.visitedYouTubeIDs.contains(ytID) {
+                        self.visitedYouTubeIDs.append(ytID)
+                        if self.visitedYouTubeIDs.count > 30 {
+                            self.visitedYouTubeIDs.removeFirst()
+                        }
+                    }
+                }
 
                 self.nowPlaying = final
                 self.webJSPermissionMissing = webJSMissingForChosen
@@ -487,7 +519,8 @@ final class MusicManager: ObservableObject {
                 artworkURL: artworkURL,
                 webBrowserApp: browser.appName,
                 webWindowIndex: target.windowIndex,
-                webTabIndex: target.tabIndex
+                webTabIndex: target.tabIndex,
+                webTabURL: target.url
             )
             return BrowserMediaResult(nowPlaying: np, jsPermissionMissing: jsMissing)
         }
@@ -900,6 +933,14 @@ final class MusicManager: ObservableObject {
             }
         }
 
+        var mediaRemoteCommand: UInt32 {
+            switch self {
+            case .playPause: return 2 // kMRTogglePlayPause
+            case .next: return 4      // kMRNextTrack
+            case .previous: return 5  // kMRPreviousTrack
+            }
+        }
+
         var mediaKey: Int32 {
             switch self {
             case .playPause: return 16
@@ -912,6 +953,18 @@ final class MusicManager: ObservableObject {
     func playPause() { control(.playPause) }
     func nextTrack() { control(.next) }
     func previousTrack() { control(.previous) }
+
+    /// Envía comandos multimedia directos al daemon del sistema vía MediaRemote.framework.
+    /// No requiere permisos de Accesibilidad ni habilitar JavaScript en Safari/Brave.
+    nonisolated private static func sendMediaRemoteCommand(_ command: UInt32) -> Bool {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW),
+              let sym = dlsym(handle, "MRMediaRemoteSendCommand") else {
+            return false
+        }
+        typealias SendCmdFn = @convention(c) (UInt32, UnsafeRawPointer?) -> Bool
+        let fn = unsafeBitCast(sym, to: SendCmdFn.self)
+        return fn(command, nil)
+    }
 
     /// Lleva al frente la aplicación o pestaña exacta que está sonando al tocar la carátula.
     func activateSource() {
@@ -992,28 +1045,87 @@ final class MusicManager: ObservableObject {
 
     private func control(_ playback: Playback) {
         guard let playing = nowPlaying else {
-            Self.postMediaKey(playback.mediaKey)
+            _ = Self.sendMediaRemoteCommand(playback.mediaRemoteCommand)
             return
         }
 
+        if playback == .playPause {
+            let newState = !playing.isPlaying
+            nowPlaying?.isPlaying = newState
+            manualPlayStateOverride = (newState, Date().addingTimeInterval(1.1))
+        }
+
         if playing.isWeb {
-            scriptQueue.async { [weak self] in
-                var handledViaJS = false
+            let previousURLFromHistory: String? = (playback == .previous) ? youtubeHistoryStack.popLast() : nil
+            let recentIDs = visitedYouTubeIDs
+            scriptQueue.async {
+                var handled = false
                 if let appName = playing.webBrowserApp,
                    let wIdx = playing.webWindowIndex,
                    let tIdx = playing.webTabIndex,
                    let spec = Self.browsers.first(where: { $0.appName == appName }) {
+                    // 1. Intentar control directo por JS si está habilitado en el navegador
                     let js = Self.webControlJS(for: playback)
                     if Self.executeTabJS(browser: spec, windowIndex: wIdx, tabIndex: tIdx, js: js) == "ok" {
-                        handledViaJS = true
+                        handled = true
+                    }
+
+                    // 2. Si JS está desactivado y es Siguiente/Anterior en YouTube, navegar la pestaña por URL via AppleScript
+                    if !handled, playback != .playPause,
+                       let tabURL = playing.webTabURL,
+                       let currentYTID = Self.extractYouTubeID(from: tabURL) {
+                        if playback == .next {
+                            if let nextID = Self.resolveNextYouTubeVideoID(
+                                currentVideoID: currentYTID,
+                                browser: spec,
+                                windowIndex: wIdx,
+                                tabIndex: tIdx,
+                                excluding: recentIDs
+                            ) {
+                                let nextURL = "https://www.youtube.com/watch?v=\(nextID)"
+                                handled = Self.navigateBrowserTab(
+                                    browser: spec,
+                                    windowIndex: wIdx,
+                                    tabIndex: tIdx,
+                                    toURL: nextURL
+                                )
+                            }
+                        } else if playback == .previous {
+                            if let prevURL = previousURLFromHistory {
+                                handled = Self.navigateBrowserTab(
+                                    browser: spec,
+                                    windowIndex: wIdx,
+                                    tabIndex: tIdx,
+                                    toURL: prevURL
+                                )
+                            } else if spec.kind == .chromium {
+                                let backScript = """
+                                tell application "\(spec.appName)"
+                                    if (count of windows) >= \(wIdx) then
+                                        set w to window \(wIdx)
+                                        if (count of tabs of w) >= \(tIdx) then
+                                            go back (tab \(tIdx) of w)
+                                            return "ok"
+                                        end if
+                                    end if
+                                end tell
+                                """
+                                handled = (Self.runScript(backScript) == "ok")
+                            }
+                        }
                     }
                 }
-                if !handledViaJS {
-                    Self.postMediaKey(playback.mediaKey)
+
+                // 3. Para Play/Pause (o sitios con MediaSession como YT Music / Spotify Web), usar MediaRemote del sistema
+                if !handled {
+                    if !Self.sendMediaRemoteCommand(playback.mediaRemoteCommand) {
+                        Self.postMediaKey(playback.mediaKey)
+                    }
                 }
-                Task {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
-                    await MainActor.run { self?.poll() }
+
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 450_000_000)
+                    self?.poll()
                 }
             }
             return
@@ -1028,12 +1140,137 @@ final class MusicManager: ObservableObject {
             return
         }
 
-        // Otras apps nativas con audio → tecla multimedia global de macOS
-        Self.postMediaKey(playback.mediaKey)
-        Task {
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            poll()
+        // Otras apps nativas con audio → MediaRemote del sistema
+        if !Self.sendMediaRemoteCommand(playback.mediaRemoteCommand) {
+            Self.postMediaKey(playback.mediaKey)
         }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            self?.poll()
+        }
+    }
+
+    /// Cambia la URL de una pestaña en Safari o navegadores Chromium vía AppleScript (no requiere permiso de JavaScript).
+    nonisolated private static func navigateBrowserTab(
+        browser: BrowserSpec,
+        windowIndex: Int,
+        tabIndex: Int,
+        toURL urlString: String
+    ) -> Bool {
+        let script: String
+        switch browser.kind {
+        case .safari:
+            script = """
+            tell application "Safari"
+                if (count of windows) < \(windowIndex) then return ""
+                set w to window \(windowIndex)
+                if (count of tabs of w) < \(tabIndex) then return ""
+                set URL of (tab \(tabIndex) of w) to "\(urlString)"
+                return "ok"
+            end tell
+            """
+        case .chromium:
+            script = """
+            tell application "\(browser.appName)"
+                if (count of windows) < \(windowIndex) then return ""
+                set w to window \(windowIndex)
+                if (count of tabs of w) < \(tabIndex) then return ""
+                set URL of (tab \(tabIndex) of w) to "\(urlString)"
+                return "ok"
+            end tell
+            """
+        case .windowTitleOnly:
+            return false
+        }
+        return runScript(script) == "ok"
+    }
+
+    /// Obtiene el ID del siguiente video recomendado/autoplay de YouTube para poder avanzar sin JavaScript de Apple Events.
+    nonisolated private static func resolveNextYouTubeVideoID(
+        currentVideoID: String,
+        browser: BrowserSpec,
+        windowIndex: Int,
+        tabIndex: Int,
+        excluding visited: [String]
+    ) -> String? {
+        // 1. En Safari podemos leer el HTML ya cargado en la pestaña con `source of tab` sin hacer request de red
+        if browser.kind == .safari {
+            let sourceScript = """
+            tell application "Safari"
+                if (count of windows) < \(windowIndex) then return ""
+                set w to window \(windowIndex)
+                if (count of tabs of w) < \(tabIndex) then return ""
+                return source of (tab \(tabIndex) of w)
+            end tell
+            """
+            if let html = runScript(sourceScript), !html.isEmpty,
+               let nextID = extractUpNextIDFromYouTubeHTML(html, currentID: currentVideoID, excluding: visited) {
+                return nextID
+            }
+        }
+
+        // 2. Fallback universal: consultar el HTML de la página del video actual vía URLSession
+        guard let url = URL(string: "https://www.youtube.com/watch?v=\(currentVideoID)") else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 3.0
+        req.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            forHTTPHeaderField: "User-Agent"
+        )
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var htmlResult: String?
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            defer { sem.signal() }
+            guard let data else { return }
+            htmlResult = String(data: data, encoding: .utf8)
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.2)
+
+        guard let html = htmlResult else { return nil }
+        return extractUpNextIDFromYouTubeHTML(html, currentID: currentVideoID, excluding: visited)
+    }
+
+    nonisolated private static func extractUpNextIDFromYouTubeHTML(
+        _ html: String,
+        currentID: String,
+        excluding visited: [String]
+    ) -> String? {
+        let excluded = Set(visited + [currentID])
+        // Primero buscamos el video oficial de Autoplay ("autoplayVideo" -> "watchEndpoint" -> "videoId")
+        let patterns = [
+            #""autoplayVideo":\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"watchEndpoint":\{"videoId":"([a-zA-Z0-9_-]{11})""#,
+            #""compactVideoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})""#,
+            #""playlistPanelVideoRenderer":\{[^{}]*"videoId":"([a-zA-Z0-9_-]{11})""#,
+            #""watchEndpoint":\{"videoId":"([a-zA-Z0-9_-]{11})""#,
+        ]
+
+        // Recortar desde "secondaryResults" si existe para priorizar la columna "Siguiente"
+        let searchScope: String
+        if let secRange = html.range(of: "\"secondaryResults\"") {
+            searchScope = String(html[secRange.lowerBound...])
+        } else {
+            searchScope = html
+        }
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let scope = pattern.contains("autoplayVideo") ? html : searchScope
+            let nsRange = NSRange(scope.startIndex..<scope.endIndex, in: scope)
+            let matches = regex.matches(in: scope, options: [], range: nsRange)
+            var firstDifferent: String?
+            for match in matches where match.numberOfRanges > 1 {
+                if let r = Range(match.range(at: 1), in: scope) {
+                    let candidate = String(scope[r])
+                    guard candidate != currentID else { continue }
+                    if firstDifferent == nil { firstDifferent = candidate }
+                    if !excluded.contains(candidate) {
+                        return candidate
+                    }
+                }
+            }
+            if let firstDifferent { return firstDifferent }
+        }
+        return nil
     }
 
     nonisolated private static func webControlJS(for playback: Playback) -> String {
