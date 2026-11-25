@@ -5,6 +5,7 @@ import SwiftUI
 struct ToolsView: View {
     var body: some View {
         VStack(spacing: 10) {
+            Spacer(minLength: 10)
             HStack(spacing: 10) {
                 PomodoroCard()
                 CountdownCard()
@@ -16,6 +17,7 @@ struct ToolsView: View {
                 SystemMonitorCard()
             }
             .frame(maxHeight: .infinity)
+            Spacer(minLength: 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
