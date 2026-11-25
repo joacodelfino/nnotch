@@ -18,10 +18,15 @@ final class FloatingShelfController {
 
     init(shelf: ShelfManager) {
         self.shelf = shelf
-        itemsObserver = shelf.$items.map { $0.isEmpty }.removeDuplicates()
-            .dropFirst().sink { [weak self] empty in
-                if empty { self?.panel?.orderOut(nil) }
+        itemsObserver = shelf.$items.dropFirst().sink { [weak self] items in
+            guard let self else { return }
+            if items.isEmpty {
+                self.panel?.orderOut(nil)
+            } else {
+                self.dismissWork?.cancel()
+                self.dismissWork = nil
             }
+        }
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
@@ -48,7 +53,7 @@ final class FloatingShelfController {
             } else if event.type == .leftMouseUp, triggered, itemCountAtDragStart == 0, shelf.items.isEmpty {
                 let work = DispatchWorkItem { [weak self] in self?.panel?.orderOut(nil) }
                 dismissWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
             }
             detector.reset()
             dragChangeCount = NSPasteboard(name: .drag).changeCount
