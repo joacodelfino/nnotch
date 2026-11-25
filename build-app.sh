@@ -49,6 +49,8 @@ codesign --force --sign - "$APP"
 
 echo "✓ Listo: $APP"
 if [[ "${1:-}" == "--run" ]]; then
-    echo "▸ Abriendo JNotch…"
+    echo "▸ Reiniciando JNotch…"
+    pkill -x JNotch 2>/dev/null || true
+    sleep 0.2
     open "$APP"
 fi

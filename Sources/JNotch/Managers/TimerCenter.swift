@@ -12,10 +12,20 @@ final class TimerCenter: ObservableObject {
     }
 
     @Published var workMinutes: Int {
-        didSet { UserDefaults.standard.set(workMinutes, forKey: "pomodoro.work") }
+        didSet {
+            UserDefaults.standard.set(workMinutes, forKey: "pomodoro.work")
+            if !pomodoroRunning && pomodoroPhase == .work {
+                pomodoroRemaining = TimeInterval(workMinutes * 60)
+            }
+        }
     }
     @Published var breakMinutes: Int {
-        didSet { UserDefaults.standard.set(breakMinutes, forKey: "pomodoro.break") }
+        didSet {
+            UserDefaults.standard.set(breakMinutes, forKey: "pomodoro.break")
+            if !pomodoroRunning && pomodoroPhase == .rest {
+                pomodoroRemaining = TimeInterval(breakMinutes * 60)
+            }
+        }
     }
     @Published private(set) var pomodoroPhase: PomodoroPhase = .work
     @Published private(set) var pomodoroRemaining: TimeInterval = 25 * 60

@@ -1,24 +1,23 @@
 import SwiftUI
 
-/// Productivity toolbox: pomodoro, countdown, stopwatch, water, counter,
-/// days-left events and the system monitor.
+/// Herramientas de productividad y monitoreo: grilla 2×2 equilibrada a pantalla completa
+/// (Pomodoro, Cuenta Regresiva, Cronómetro y Sistema/Red).
 struct ToolsView: View {
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
-
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVGrid(columns: columns, spacing: 10) {
-                PomodoroCard().frame(height: 150)
-                CountdownCard().frame(height: 150)
-                StopwatchCard().frame(height: 150)
-                WaterCard().frame(height: 140)
-                CounterCard().frame(height: 140)
-                SystemMonitorCard().frame(height: 140)
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                PomodoroCard()
+                CountdownCard()
             }
-            DaysLeftCard()
-                .frame(minHeight: 120)
-                .padding(.top, 10)
+            .frame(maxHeight: .infinity)
+
+            HStack(spacing: 10) {
+                StopwatchCard()
+                SystemMonitorCard()
+            }
+            .frame(maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -27,40 +26,76 @@ struct ToolsView: View {
 struct PomodoroCard: View {
     @EnvironmentObject private var timers: TimerCenter
 
+    private var phaseTint: Color {
+        timers.pomodoroPhase == .work ? .red : .green
+    }
+
+    private var totalSeconds: Double {
+        let mins = timers.pomodoroPhase == .work ? timers.workMinutes : timers.breakMinutes
+        return Double(max(mins * 60, 1))
+    }
+
+    private var progress: Double {
+        let elapsed = totalSeconds - timers.pomodoroRemaining
+        return min(max(elapsed / totalSeconds, 0), 1)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardTitle(
-                "Pomodoro · \(timers.pomodoroPhase.rawValue)",
-                symbol: "brain.head.profile",
-                tint: timers.pomodoroPhase == .work ? .red : .green
-            )
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                CardTitle(
+                    "Pomodoro · \(timers.pomodoroPhase.rawValue)",
+                    symbol: "brain.head.profile",
+                    tint: phaseTint
+                )
+                Spacer()
+                if timers.pomodoroCycles > 0 {
+                    Text("\(timers.pomodoroCycles) \(timers.pomodoroCycles == 1 ? "ciclo" : "ciclos")")
+                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(phaseTint)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(phaseTint.opacity(0.16)))
+                }
+            }
+
             Spacer(minLength: 0)
+
             Text(TimerCenter.format(timers.pomodoroRemaining))
-                .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-            if timers.pomodoroCycles > 0 {
-                Text("\(timers.pomodoroCycles) ciclos completados")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .frame(maxWidth: .infinity)
-            }
+
+            ProgressView(value: progress)
+                .tint(phaseTint)
+                .animation(Motion.standard, value: progress)
+
             Spacer(minLength: 0)
-            HStack {
+
+            HStack(spacing: 8) {
                 RoundIconButton(
                     symbol: timers.pomodoroRunning ? "pause.fill" : "play.fill",
-                    tint: .red,
+                    tint: phaseTint,
                     label: timers.pomodoroRunning ? "Pausar Pomodoro" : "Iniciar Pomodoro"
                 ) { timers.pomodoroToggle() }
-                RoundIconButton(symbol: "arrow.counterclockwise", tint: .gray, label: "Reiniciar Pomodoro") {
-                    timers.pomodoroReset()
-                }
+
+                RoundIconButton(
+                    symbol: "arrow.counterclockwise",
+                    tint: .gray,
+                    label: "Reiniciar Pomodoro"
+                ) { timers.pomodoroReset() }
+
                 Spacer()
+
                 if !timers.pomodoroRunning {
-                    VStack(alignment: .trailing, spacing: 2) {
+                    HStack(spacing: 10) {
                         MiniStepper(label: "Foco", value: $timers.workMinutes, range: 5...90)
                         MiniStepper(label: "Pausa", value: $timers.breakMinutes, range: 1...30)
                     }
+                } else {
+                    Text(timers.pomodoroPhase == .work ? "En foco" : "Descansando")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.45))
                 }
             }
         }
@@ -72,23 +107,66 @@ struct PomodoroCard: View {
 
 struct CountdownCard: View {
     @EnvironmentObject private var timers: TimerCenter
+    private let presets = [5, 10, 15, 30]
+
+    private var displayedSeconds: TimeInterval {
+        timers.countdownRemaining > 0
+            ? timers.countdownRemaining
+            : TimeInterval(timers.countdownMinutes * 60)
+    }
+
+    private var progress: Double {
+        let total = Double(max(timers.countdownMinutes * 60, 1))
+        guard timers.countdownRemaining > 0 else { return 0 }
+        return min(max((total - timers.countdownRemaining) / total, 0), 1)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardTitle("Cuenta Regresiva", symbol: "timer", tint: .orange)
-            Spacer(minLength: 0)
-            Text(
-                TimerCenter.format(
-                    timers.countdownRemaining > 0
-                        ? timers.countdownRemaining
-                        : TimeInterval(timers.countdownMinutes * 60)
-                )
-            )
-            .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
+                CardTitle("Cuenta Regresiva", symbol: "timer", tint: .orange)
+                Spacer()
+                if !timers.countdownRunning && timers.countdownRemaining <= 0 {
+                    HStack(spacing: 4) {
+                        ForEach(presets, id: \.self) { mins in
+                            Button {
+                                timers.countdownMinutes = mins
+                            } label: {
+                                Text("\(mins)m")
+                                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(
+                                        timers.countdownMinutes == mins ? .orange : .white.opacity(0.45)
+                                    )
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(
+                                            timers.countdownMinutes == mins
+                                                ? Color.orange.opacity(0.18)
+                                                : Color.white.opacity(0.06)
+                                        )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Text(TimerCenter.format(displayedSeconds))
+                .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+
+            ProgressView(value: progress)
+                .tint(.orange)
+                .animation(Motion.standard, value: progress)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 8) {
                 RoundIconButton(
                     symbol: timers.countdownRunning ? "pause.fill" : "play.fill",
                     tint: .orange,
@@ -96,12 +174,23 @@ struct CountdownCard: View {
                 ) {
                     timers.countdownRunning ? timers.countdownPause() : timers.countdownStart()
                 }
-                RoundIconButton(symbol: "arrow.counterclockwise", tint: .gray, label: "Reiniciar cuenta regresiva") {
+
+                RoundIconButton(
+                    symbol: "arrow.counterclockwise",
+                    tint: .gray,
+                    label: "Reiniciar cuenta regresiva"
+                ) {
                     timers.countdownReset()
                 }
+
                 Spacer()
+
                 if !timers.countdownRunning && timers.countdownRemaining <= 0 {
                     MiniStepper(label: "min", value: $timers.countdownMinutes, range: 1...240)
+                } else if timers.countdownRunning {
+                    Text("En curso")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.45))
                 }
             }
         }
@@ -115,128 +204,130 @@ struct StopwatchCard: View {
     @EnvironmentObject private var timers: TimerCenter
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardTitle("Cronómetro", symbol: "stopwatch", tint: .cyan)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                CardTitle("Cronómetro", symbol: "stopwatch", tint: .cyan)
+                Spacer()
+                if timers.stopwatchRunning {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.cyan)
+                            .frame(width: 5, height: 5)
+                        Text("Activo")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.cyan)
+                    }
+                }
+            }
+
             Spacer(minLength: 0)
+
             Text(TimerCenter.format(timers.stopwatchElapsed))
-                .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
+
             Spacer(minLength: 0)
-            HStack {
+
+            HStack(spacing: 8) {
                 RoundIconButton(
                     symbol: timers.stopwatchRunning ? "pause.fill" : "play.fill",
                     tint: .cyan,
                     label: timers.stopwatchRunning ? "Pausar cronómetro" : "Iniciar cronómetro"
                 ) { timers.stopwatchToggle() }
-                RoundIconButton(symbol: "arrow.counterclockwise", tint: .gray, label: "Reiniciar cronómetro") {
-                    timers.stopwatchReset()
+
+                RoundIconButton(
+                    symbol: "arrow.counterclockwise",
+                    tint: .gray,
+                    label: "Reiniciar cronómetro"
+                ) { timers.stopwatchReset() }
+
+                Spacer()
+
+                if timers.stopwatchElapsed > 0 && !timers.stopwatchRunning {
+                    Text("Pausado")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.4))
                 }
-                Spacer()
             }
         }
         .islandCard()
     }
 }
 
-// MARK: - Water
-
-struct WaterCard: View {
-    @EnvironmentObject private var habits: HabitStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardTitle("Agua", symbol: "drop.fill", tint: .blue)
-            Spacer(minLength: 0)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("\(habits.waterCount)")
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("/ \(habits.waterGoal) vasos")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-            .frame(maxWidth: .infinity)
-            ProgressView(value: Double(habits.waterCount), total: Double(max(habits.waterGoal, 1)))
-                .tint(.blue)
-                .animation(Motion.standard, value: habits.waterCount)
-            Spacer(minLength: 0)
-            HStack {
-                RoundIconButton(symbol: "minus", tint: .gray, label: "Restar un vaso") { habits.undoWater() }
-                RoundIconButton(symbol: "plus", tint: .blue, label: "Sumar un vaso") { habits.drinkWater() }
-                Spacer()
-                MiniStepper(label: "Meta", value: $habits.waterGoal, range: 1...20)
-            }
-        }
-        .islandCard()
-        .onAppear { habits.rolloverIfNeeded() }
-    }
-}
-
-// MARK: - Counter
-
-struct CounterCard: View {
-    @EnvironmentObject private var habits: HabitStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardTitle("Contador", symbol: "number.circle.fill", tint: .mint)
-            Spacer(minLength: 0)
-            Text("\(habits.counterValue)")
-                .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-            Spacer(minLength: 0)
-            HStack {
-                RoundIconButton(symbol: "minus", tint: .gray, label: "Restar") { habits.counterValue -= 1 }
-                RoundIconButton(symbol: "plus", tint: .mint, label: "Sumar") { habits.counterValue += 1 }
-                Spacer()
-                Button("Cero") { habits.counterValue = 0 }
-                    .buttonStyle(.plain)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-        }
-        .islandCard()
-    }
-}
-
-// MARK: - System monitor
+// MARK: - System & Network monitor
 
 struct SystemMonitorCard: View {
     @EnvironmentObject private var stats: SystemStats
+    @EnvironmentObject private var network: NetworkMonitor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            CardTitle("Sistema", symbol: "gauge.with.dots.needle.50percent", tint: .orange)
+            HStack {
+                CardTitle("Sistema y Red", symbol: "gauge.with.dots.needle.50percent", tint: .orange)
+                Spacer()
+                if let level = stats.batteryLevel {
+                    HStack(spacing: 3) {
+                        if stats.batteryCharging {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.green)
+                        }
+                        Text("%\(level)")
+                            .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(level <= 20 ? .red : .white.opacity(0.65))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.06)))
+                }
+            }
+
             Spacer(minLength: 0)
+
             meter(
                 label: "CPU",
                 fraction: stats.cpuUsage,
                 detail: String(format: "%%%.0f", stats.cpuUsage * 100),
                 tint: .orange
             )
+
             meter(
                 label: "RAM",
                 fraction: stats.memoryUsage,
                 detail: String(format: "%.1f / %.0f GB", stats.memoryUsedGB, stats.memoryTotalGB),
                 tint: .purple
             )
-            if let level = stats.batteryLevel {
-                meter(
-                    label: "Batería",
-                    fraction: Double(level) / 100,
-                    detail: stats.batteryCharging ? "%\(level) ⚡︎" : "%\(level)",
-                    tint: level <= 20 ? .red : .green
-                )
-            }
+
             Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.green)
+                    Text(NetworkMonitor.format(network.downloadBps))
+                        .font(.system(size: 9.5).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.blue)
+                    Text(NetworkMonitor.format(network.uploadBps))
+                        .font(.system(size: 9.5).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                Spacer(minLength: 4)
+                NetworkSparkline(samples: network.history)
+                    .frame(width: 68, height: 16)
+            }
         }
         .islandCard()
     }
 
     private func meter(label: String, fraction: Double, detail: String, tint: Color) -> some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 3) {
             HStack {
                 Text(label)
                     .font(.system(size: 9, weight: .semibold))
@@ -244,7 +335,7 @@ struct SystemMonitorCard: View {
                 Spacer()
                 Text(detail)
                     .font(.system(size: 9).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.white.opacity(0.75))
             }
             ProgressView(value: min(max(fraction, 0), 1))
                 .tint(tint)
@@ -253,76 +344,28 @@ struct SystemMonitorCard: View {
     }
 }
 
-// MARK: - Days left
-
-struct DaysLeftCard: View {
-    @EnvironmentObject private var habits: HabitStore
-    @State private var newName = ""
-    @State private var newDate = Date()
+private struct NetworkSparkline: View {
+    let samples: [Double]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            CardTitle("Días Restantes", symbol: "calendar.badge.clock", tint: .pink)
-            if habits.events.isEmpty {
-                Text("Sumá una fecha importante para ver cuántos días faltan.")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.35))
-            } else {
-                ForEach(habits.events) { event in
-                    HStack {
-                        Text(event.name)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Spacer(minLength: 6)
-                        Text(event.date, format: .dateTime.day().month())
-                            .font(.system(size: 9))
-                            .foregroundStyle(.white.opacity(0.35))
-                        Text(event.daysLeft >= 0 ? "\(event.daysLeft) d" : "pasó")
-                            .font(.caption2.weight(event.daysLeft <= 3 ? .bold : .semibold).monospacedDigit())
-                            .foregroundStyle(event.daysLeft <= 3 ? .pink : .white.opacity(0.7))
-                        Button {
-                            withAnimation(Motion.standard) { habits.removeEvent(event) }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.white.opacity(0.3))
-                        }
-                        .buttonStyle(IslandButtonStyle())
-                        .accessibilityLabel("Eliminar \(event.name)")
+        GeometryReader { geo in
+            let peak = max(samples.max() ?? 0, 1024)
+            Path { path in
+                guard samples.count > 1 else { return }
+                let stepX = geo.size.width / CGFloat(max(samples.count - 1, 1))
+                for (index, value) in samples.enumerated() {
+                    let x = CGFloat(index) * stepX
+                    let normalized = CGFloat(min(max(value / peak, 0), 1))
+                    let y = geo.size.height * (1 - normalized)
+                    if index == 0 {
+                        path.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        path.addLine(to: CGPoint(x: x, y: y))
                     }
-                    .padding(.vertical, 2)
-                    .transition(.opacity)
                 }
             }
-            HStack(spacing: 6) {
-                TextField("Nombre de la fecha", text: $newName)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
-                    .foregroundStyle(.white)
-                DatePicker("", selection: $newDate, displayedComponents: .date)
-                    .datePickerStyle(.compact)
-                    .labelsHidden()
-                    .colorScheme(.dark)
-                Button {
-                    withAnimation(Motion.standard) {
-                        habits.addEvent(name: newName.isEmpty ? "Evento" : newName, date: newDate)
-                    }
-                    newName = ""
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.pink)
-                }
-                .buttonStyle(IslandButtonStyle())
-                .accessibilityLabel("Agregar fecha")
-            }
+            .stroke(Color.green.opacity(0.75), style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
         }
-        .islandCard()
     }
 }
 
@@ -341,7 +384,7 @@ struct RoundIconButton: View {
                 .foregroundStyle(.white)
                 .frame(width: 24, height: 24)
                 .background(Circle().fill(tint.opacity(0.55)))
-                .padding(2)                // görsel 24pt kalır, dokunma hedefi ~28pt
+                .padding(2)
                 .contentShape(Circle())
         }
         .buttonStyle(IslandButtonStyle())
@@ -370,7 +413,7 @@ struct MiniStepper: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(IslandButtonStyle())
-                .accessibilityLabel("\(label) artır")
+                .accessibilityLabel("Subir \(label)")
                 Button {
                     if value > range.lowerBound { value -= 1 }
                 } label: {
@@ -381,7 +424,7 @@ struct MiniStepper: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(IslandButtonStyle())
-                .accessibilityLabel("\(label) azalt")
+                .accessibilityLabel("Bajar \(label)")
             }
         }
     }

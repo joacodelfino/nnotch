@@ -11,7 +11,7 @@ Centro de control interactivo y modular en el notch para macOS, construido 100% 
 - **Calendario y Recordatorios (`CalendarTabView`)**: integrado directo con `EventKit` de macOS.
 - **Notas Rápidas y Links (`NotesTabView`)**: bloc rápido persistente dentro del notch.
 - **Bandeja de Archivos (`ShelfView`)** y **Portapapeles (`ClipboardView`)**.
-- **Herramientas (`ToolsView`)**: Pomodoro, cuenta regresiva, cronómetro, agua, contador y fechas clave.
+- **Herramientas (`ToolsView`)**: Pomodoro, cuenta regresiva, cronómetro y monitor de sistema/red en grilla 2×2.
 - **Módulos encendibles/apagables (`SettingsView`)**: desde Ajustes podés activar o desactivar cualquier pestaña.
 
 ## Compilar y ejecutar
