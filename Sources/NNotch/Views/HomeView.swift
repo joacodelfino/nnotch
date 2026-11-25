@@ -53,7 +53,10 @@ struct MusicCard: View {
                         .popover(isPresented: $showSafariHelp) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Controles de YouTube en Safari").font(.headline)
-                                Text("Safari no permite leer o controlar el reproductor de esta pestaña. Comprobá que la página terminó de cargar y que JavaScript desde eventos de Apple está habilitado en el menú Desarrollo de Safari.")
+                                Text("No se pudo leer el reproductor de Safari. Revisá el permiso de Automatización de nnotch para Safari. Si ya está permitido, comprobá que la página terminó de cargar y que Safari permite JavaScript desde eventos de Apple.")
+                                Button("Revisar permiso de Automatización") {
+                                    SystemSettingsPane.automation.open()
+                                }
                                 Text("Después volvé a intentar. Sin ese acceso, siguiente y anterior pueden no estar disponibles.")
                                 Button("Volver a comprobar") {
                                     music.refresh()

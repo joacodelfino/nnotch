@@ -263,7 +263,8 @@ final class MusicManager: ObservableObject {
                         missingJSBundles.insert(browser.bundleID)
                     }
                 } else if browserHasAudio {
-                    // El navegador está emitiendo sonido pero no pudimos leer pestañas (ej. Zen sin System Events o ventana privada)
+                    // El navegador emite sonido, pero no pudimos identificar su pestaña.
+                    missingJSBundles.insert(browser.bundleID)
                     candidates.append(
                         NowPlaying(
                             sourceLabel: browser.shortName,
@@ -567,7 +568,14 @@ final class MusicManager: ObservableObject {
                         try
                             if t is curTab then set isAct to "1"
                         end try
-                        set out to out & wIdx & "|^|" & tIdx & "|^|" & isAct & "|^|" & (name of t) & "|^|" & (URL of t) & "\\n"
+                        try
+                            set tabURL to URL of t
+                            set tabTitle to name of t
+                            if tabTitle is missing value then set tabTitle to ""
+                            if tabURL is not missing value then
+                                set out to out & wIdx & "|^|" & tIdx & "|^|" & isAct & "|^|" & tabTitle & "|^|" & tabURL & "\\n"
+                            end if
+                        end try
                     end repeat
                 end repeat
                 return out
