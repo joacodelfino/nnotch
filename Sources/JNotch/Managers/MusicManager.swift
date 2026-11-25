@@ -1,71 +1,95 @@
 import AppKit
 import Combine
+import CoreAudio
 import CoreGraphics
 import os
 
 struct NowPlaying: Equatable {
-    enum Source: String {
-        case appleMusic = "Apple Music"
-        case spotify = "Spotify"
-    }
-
-    var source: Source
+    var sourceLabel: String
+    var bundleID: String?
     var title: String
     var artist: String
     var isPlaying: Bool
     var duration: Double
     var position: Double
-    /// Tarayıcıdaki (Chrome/Safari) Spotify web player'dan geliyorsa true —
-    /// native uygulama olmadığı için AppleScript kontrolleri (playpause vb.) uygulanmaz.
-    var isWeb = false
+    var isWeb: Bool = false
+    var artworkURL: String? = nil
+    var webBrowserApp: String? = nil
+    var webWindowIndex: Int? = nil
+    var webTabIndex: Int? = nil
 
-    var trackKey: String { "\(source.rawValue)|\(title)|\(artist)" }
+    var trackKey: String { "\(sourceLabel)|\(title)|\(artist)|\(artworkURL ?? "")" }
 }
 
-/// Now-playing info + controls for Apple Music and Spotify via Apple Events.
-/// Only talks to apps that are already running so it never launches them.
+/// Motor multimedia universal: detecta Spotify, Apple Music, YouTube y cualquier pestaña web
+/// o aplicación reproduciendo sonido (Brave, Chrome, Safari, Arc, Edge, Vivaldi, Zen, Firefox, etc.)
+/// combinando CoreAudio (estado real de salida de audio por proceso) + AppleScript + oEmbed.
 @MainActor
 final class MusicManager: ObservableObject {
     @Published private(set) var nowPlaying: NowPlaying?
     @Published private(set) var artwork: NSImage?
-    /// Web Spotify çalıyor ama tarayıcıda "Apple Events'ten JavaScript'e izin ver"
-    /// kapalı → süre/ilerleme okunamıyor, seek çalışmıyor. UI kullanıcıyı bilgilendirir.
     @Published private(set) var webJSPermissionMissing = false
-    /// Otomasyon (Apple Events) izni reddedildi (-1743): oynatıcı çalışıyor olsa
-    /// bile durumu okuyamayız. UI yanıltıcı "müzik çalmıyor" yerine izin
-    /// yönlendirmesi gösterir.
     @Published private(set) var automationDenied = false
 
     private var timer: Timer?
-    /// Reentrancy koruması: bir poll turu aralıktan uzun sürerse (ör. çok sekmeli
-    /// Chrome taraması) kuyruğa yenisi eklenmez — Apple Events seli birikmez.
     private var pollInFlight = false
     private var lastArtworkKey = ""
     private let scriptQueue = DispatchQueue(label: "jnotch.music", qos: .utility)
     private let artworkCache = NSCache<NSString, NSImage>()
-    private var lastWebTrack: NowPlaying?
+    nonisolated(unsafe) private static let ytMetaCache = NSCache<NSString, NSDictionary>()
     private var seekGeneration = 0
     private var lastSeek: (trackKey: String, position: Double, generation: Int)?
     nonisolated private static let log = Logger(subsystem: "com.joacodelfino.jnotch", category: "Music")
 
-    /// Bir oynatıcı aktifken hızlı, hiç yokken yavaş yokla. Chrome/Safari açık
-    /// ama Spotify sekmesi yokken AppleScript sekme taramasının maliyetini düşürür.
     private let activeInterval: TimeInterval = 1.5
-    private let idleInterval: TimeInterval = 6.0
+    private let idleInterval: TimeInterval = 4.0
     private var pollInterval: TimeInterval = 1.5
+
+    private struct BrowserSpec: Sendable {
+        let bundleID: String
+        let appName: String
+        let shortName: String
+        let kind: Kind
+
+        enum Kind: Sendable {
+            case chromium
+            case safari
+            case windowTitleOnly // Zen, Firefox
+        }
+    }
 
     nonisolated private static let spotifyBundleID = "com.spotify.client"
     nonisolated private static let musicBundleID = "com.apple.Music"
-    nonisolated private static let chromeBundleID = "com.google.Chrome"
-    nonisolated private static let safariBundleID = "com.apple.Safari"
+
+    nonisolated private static let browsers: [BrowserSpec] = [
+        BrowserSpec(bundleID: "com.brave.Browser", appName: "Brave Browser", shortName: "Brave", kind: .chromium),
+        BrowserSpec(bundleID: "com.google.Chrome", appName: "Google Chrome", shortName: "Chrome", kind: .chromium),
+        BrowserSpec(bundleID: "company.thebrowser.Browser", appName: "Arc", shortName: "Arc", kind: .chromium),
+        BrowserSpec(bundleID: "com.microsoft.edgemac", appName: "Microsoft Edge", shortName: "Edge", kind: .chromium),
+        BrowserSpec(bundleID: "com.vivaldi.Vivaldi", appName: "Vivaldi", shortName: "Vivaldi", kind: .chromium),
+        BrowserSpec(bundleID: "com.apple.Safari", appName: "Safari", shortName: "Safari", kind: .safari),
+        BrowserSpec(bundleID: "app.zen-browser.zen", appName: "Zen", shortName: "Zen", kind: .windowTitleOnly),
+        BrowserSpec(bundleID: "org.mozilla.firefox", appName: "Firefox", shortName: "Firefox", kind: .windowTitleOnly),
+    ]
+
+    /// Procesos del sistema que ignoramos en el fallback genérico de CoreAudio.
+    nonisolated private static let ignoredAudioBundlePrefixes: [String] = [
+        "com.apple.systemsound",
+        "com.apple.corespeechd",
+        "com.apple.Siri",
+        "com.apple.loginwindow",
+        "com.apple.finder",
+        "com.apple.NotificationCenter",
+        "com.joacodelfino.jnotch",
+    ]
 
     init() {
-        artworkCache.countLimit = 32
+        artworkCache.countLimit = 48
+        Self.ytMetaCache.countLimit = 64
         scheduleTimer(interval: activeInterval)
         poll()
     }
 
-    /// Panel açıldığında anında taze durum için dışarıdan tetiklenebilir.
     func refresh() { poll() }
 
     deinit { timer?.invalidate() }
@@ -80,7 +104,6 @@ final class MusicManager: ObservableObject {
         pollInterval = interval
     }
 
-    /// Yokla aralığını çalan-parça durumuna göre uyarlar (aktif → 1.5s, boşta → 6s).
     private func applyPollInterval(active: Bool) {
         let desired = active ? activeInterval : idleInterval
         guard desired != pollInterval else { return }
@@ -91,198 +114,688 @@ final class MusicManager: ObservableObject {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 
-    private func poll() {
-        let spotifyRunning = Self.isRunning(Self.spotifyBundleID)
-        let musicRunning = Self.isRunning(Self.musicBundleID)
-        // Web/PWA Spotify: native Spotify yokken tarayıcıdaki sekmeyi tara.
-        let chromeRunning = !spotifyRunning && Self.isRunning(Self.chromeBundleID)
-        let safariRunning = !spotifyRunning && Self.isRunning(Self.safariBundleID)
-        guard spotifyRunning || musicRunning || chromeRunning || safariRunning else {
-            if nowPlaying != nil {
-                nowPlaying = nil
-                artwork = nil
-                lastArtworkKey = ""
+    // MARK: - CoreAudio Active Output Detection
+
+    private struct ActiveAudioApp: Sendable {
+        let pid: pid_t
+        let bundleID: String
+        let localizedName: String
+    }
+
+    /// Devuelve las aplicaciones que están emitiendo sonido real en este instante vía CoreAudio.
+    nonisolated private static func activeAudioApps() -> [ActiveAudioApp] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize
+        ) == noErr, dataSize > 0 else { return [] }
+
+        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        var objectIDs = [AudioObjectID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &objectIDs
+        ) == noErr else { return [] }
+
+        var results: [ActiveAudioApp] = []
+        for objID in objectIDs {
+            var outAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyIsRunningOutput,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var isRunning: UInt32 = 0
+            var runSize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(objID, &outAddr, 0, nil, &runSize, &isRunning) == noErr,
+                  isRunning != 0 else { continue }
+
+            var pidAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var pid: pid_t = 0
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            _ = AudioObjectGetPropertyData(objID, &pidAddr, 0, nil, &pidSize, &pid)
+
+            var bidAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioProcessPropertyBundleID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var unmanagedStr: Unmanaged<CFString>?
+            var bidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            var rawBundleID = ""
+            if AudioObjectGetPropertyData(objID, &bidAddr, 0, nil, &bidSize, &unmanagedStr) == noErr,
+               let cf = unmanagedStr?.takeRetainedValue() {
+                rawBundleID = cf as String
             }
-            webJSPermissionMissing = false
-            automationDenied = false
-            lastWebTrack = nil
-            applyPollInterval(active: false)
-            return
+
+            let resolved = normalizeAudioSource(pid: pid, rawBundleID: rawBundleID)
+            if !resolved.bundleID.isEmpty,
+               !results.contains(where: { $0.bundleID == resolved.bundleID }) {
+                results.append(resolved)
+            }
         }
+        return results
+    }
+
+    /// Mapea procesos helper (Brave Helper, Chrome Helper, WebKit.GPU, plugin-container) a su app principal.
+    nonisolated private static func normalizeAudioSource(pid: pid_t, rawBundleID: String) -> ActiveAudioApp {
+        for b in browsers {
+            if rawBundleID == b.bundleID || rawBundleID.hasPrefix(b.bundleID + ".") {
+                return ActiveAudioApp(pid: pid, bundleID: b.bundleID, localizedName: b.shortName)
+            }
+        }
+        if rawBundleID.hasPrefix("com.apple.WebKit") && isRunning("com.apple.Safari") {
+            return ActiveAudioApp(pid: pid, bundleID: "com.apple.Safari", localizedName: "Safari")
+        }
+        if rawBundleID.hasPrefix("org.mozilla.plugincontainer") {
+            if isRunning("app.zen-browser.zen") {
+                return ActiveAudioApp(pid: pid, bundleID: "app.zen-browser.zen", localizedName: "Zen")
+            }
+            if isRunning("org.mozilla.firefox") {
+                return ActiveAudioApp(pid: pid, bundleID: "org.mozilla.firefox", localizedName: "Firefox")
+            }
+        }
+        if let app = NSRunningApplication(processIdentifier: pid) {
+            let bid = app.bundleIdentifier ?? rawBundleID
+            let name = app.localizedName ?? bid
+            return ActiveAudioApp(pid: pid, bundleID: bid, localizedName: name)
+        }
+        return ActiveAudioApp(pid: pid, bundleID: rawBundleID, localizedName: rawBundleID)
+    }
+
+    // MARK: - Polling
+
+    private func poll() {
         guard !pollInFlight else { return }
         pollInFlight = true
-
-        let lastWeb = lastWebTrack
         let startGen = seekGeneration
+
         scriptQueue.async { [weak self] in
             Self.sawAutomationDenied = false
-            var spotify: NowPlaying?
-            var music: NowPlaying?
-            var spotifyArtURL: String?
+            let audioApps = Self.activeAudioApps()
+            let audioBundleIDs = Set(audioApps.map(\.bundleID))
 
-            if spotifyRunning {
-                let result = Self.runScript(
-                    """
-                    tell application "Spotify"
-                        if player state is stopped then return "stopped"
-                        set t to current track
-                        return (player state as string) & "|~|" & (name of t) & "|~|" & (artist of t) & "|~|" & ((duration of t) / 1000) & "|~|" & player position & "|~|" & (artwork url of t)
-                    end tell
-                    """
-                )
-                if let parts = Self.split(result), parts.count >= 6 {
-                    spotify = NowPlaying(
-                        source: .spotify,
-                        title: parts[1],
-                        artist: parts[2],
-                        isPlaying: parts[0] == "playing",
-                        duration: Double(parts[3]) ?? 0,
-                        position: Double(parts[4]) ?? 0
-                    )
-                    spotifyArtURL = parts[5]
-                }
+            let spotifyRunning = Self.isRunning(Self.spotifyBundleID)
+            let musicRunning = Self.isRunning(Self.musicBundleID)
+            let runningBrowsers = Self.browsers.filter { Self.isRunning($0.bundleID) }
+
+            var candidates: [NowPlaying] = []
+            var webJSMissingForChosen = false
+
+            // 1. Spotify nativo
+            if spotifyRunning, let sp = Self.querySpotify() {
+                candidates.append(sp)
             }
-            if musicRunning {
-                let result = Self.runScript(
-                    """
-                    tell application "Music"
-                        if player state is stopped then return "stopped"
-                        try
-                            set t to current track
-                            return (player state as string) & "|~|" & (name of t) & "|~|" & (artist of t) & "|~|" & (duration of t) & "|~|" & player position & "|~|" & ""
-                        on error
-                            return "stopped"
-                        end try
-                    end tell
-                    """
-                )
-                if let parts = Self.split(result), parts.count >= 5 {
-                    music = NowPlaying(
-                        source: .appleMusic,
-                        title: parts[1],
-                        artist: parts[2],
-                        isPlaying: parts[0] == "playing",
-                        duration: Double(parts[3]) ?? 0,
-                        position: Double(parts[4]) ?? 0
+
+            // 2. Apple Music nativo
+            if musicRunning, let am = Self.queryAppleMusic() {
+                candidates.append(am)
+            }
+
+            // 3. Navegadores Web (YouTube, Spotify Web, SoundCloud, Twitch, Netflix, cursos, o cualquier tab con audio)
+            var missingJSBundles = Set<String>()
+            for browser in runningBrowsers {
+                let browserHasAudio = audioBundleIDs.contains(browser.bundleID)
+                if let result = Self.queryBrowser(browser, isOutputtingAudio: browserHasAudio) {
+                    candidates.append(result.nowPlaying)
+                    if result.jsPermissionMissing {
+                        missingJSBundles.insert(browser.bundleID)
+                    }
+                } else if browserHasAudio {
+                    // El navegador está emitiendo sonido pero no pudimos leer pestañas (ej. Zen sin System Events o ventana privada)
+                    candidates.append(
+                        NowPlaying(
+                            sourceLabel: browser.shortName,
+                            bundleID: browser.bundleID,
+                            title: "Reproduciendo en \(browser.shortName)",
+                            artist: "Audio web activo",
+                            isPlaying: true,
+                            duration: 0,
+                            position: 0,
+                            isWeb: true,
+                            webBrowserApp: browser.appName
+                        )
                     )
                 }
             }
 
-            // Native Spotify yoksa tarayıcıdaki web Spotify'ı dene.
-            var web: NowPlaying?
-            var webJSMissing = false
-            var sawWebTab = false   // bu poll'da bir Spotify sekmesi görüldü mü
-            if spotify == nil, chromeRunning || safariRunning {
-                switch Self.webSpotify(chrome: chromeRunning, safari: safariRunning) {
-                case .playing(var w):
-                    sawWebTab = true
-                    // "Allow JavaScript from Apple Events" açıksa gerçek pozisyon/süre okunur;
-                    // kapalıysa runBrowserJS nil döner → izin eksik olarak işaretle.
-                    if let raw = Self.runBrowserJS(Self.playbackTimeJS),
-                       let sep = raw.range(of: "|~|") {
-                        w.position = Self.parseTimecode(String(raw[raw.startIndex..<sep.lowerBound])) ?? 0
-                        w.duration = Self.parseTimecode(String(raw[sep.upperBound...])) ?? 0
-                    } else {
-                        webJSMissing = true
-                    }
-                    web = w
-                case .pausedTabPresent:
-                    // Sekme açık ama duraklatılmış: son bilinen parçayı duraklatılmış göster.
-                    sawWebTab = true
-                    if var last = lastWeb {
-                        last.isPlaying = false
-                        web = last
-                    }
-                case .absent:
-                    break
-                }
+            // 4. Otras apps nativas emitiendo audio (ej. Prime Video, VLC, IINA, QuickTime, etc.)
+            for audioApp in audioApps {
+                let bid = audioApp.bundleID
+                if bid == Self.spotifyBundleID || bid == Self.musicBundleID { continue }
+                if Self.browsers.contains(where: { $0.bundleID == bid }) { continue }
+                if Self.ignoredAudioBundlePrefixes.contains(where: { bid.hasPrefix($0) }) { continue }
+                if candidates.contains(where: { $0.bundleID == bid }) { continue }
+
+                candidates.append(
+                    NowPlaying(
+                        sourceLabel: audioApp.localizedName,
+                        bundleID: bid,
+                        title: audioApp.localizedName,
+                        artist: "Reproduciendo audio",
+                        isPlaying: true,
+                        duration: 0,
+                        position: 0,
+                        isWeb: false
+                    )
+                )
             }
 
-            // Prefer whichever player is actively playing; otherwise show any paused track.
-            let candidates = [spotify, music, web].compactMap { $0 }
+            // Prioridad: primero lo que esté activamente sonando; si todo está en pausa, el primero disponible.
             let chosen = candidates.first(where: { $0.isPlaying }) ?? candidates.first
-            let webResult = web
-            let sawWebTabResult = sawWebTab
-            let denied = Self.sawAutomationDenied
+            if let bid = chosen?.bundleID, chosen?.isWeb == true, missingJSBundles.contains(bid) {
+                webJSMissingForChosen = true
+            }
+            let denied = Self.sawAutomationDenied && chosen == nil
 
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.pollInFlight = false
                 self.automationDenied = denied
+
                 var final = chosen
-                // Bu poll seek'ten ÖNCE başladıysa (startGen < seek'in kuşağı) raporladığı
-                // pozisyon bayattır; hedefi kullan ki scrubber geri zıplamasın.
-                if let s = self.lastSeek, var f = final, !f.isWeb,
+                if let s = self.lastSeek, var f = final,
                    f.trackKey == s.trackKey, startGen < s.generation {
                     f.position = s.position
                     final = f
                 }
+
                 self.nowPlaying = final
-                // Web parça hafızası: çalarken güncelle; Spotify sekmesi hiç görülmediyse
-                // temizle (başka oynatıcı aktifken kapalı sekmenin hayaleti diriltilmesin).
-                if let w = webResult, w.isPlaying {
-                    self.lastWebTrack = w
-                } else if !sawWebTabResult {
-                    self.lastWebTrack = nil
-                }
-                self.webJSPermissionMissing = (final?.isWeb == true) && webJSMissing
+                self.webJSPermissionMissing = webJSMissingForChosen
                 self.applyPollInterval(active: final != nil)
-                self.refreshArtworkIfNeeded(for: final, spotifyArtURL: spotifyArtURL)
+                self.refreshArtworkIfNeeded(for: final)
             }
         }
     }
 
-    // MARK: - Web (tarayıcı) Spotify
+    // MARK: - Native Spotify & Apple Music
 
-    private enum WebSpotifyState {
-        case playing(NowPlaying)   // "Şarkı • Sanatçı" başlığı → çalıyor
-        case pausedTabPresent      // sekme açık ama başlık yalnız "Spotify" → duraklatılmış
-        case absent                // hiç Spotify sekmesi yok
-    }
-
-    /// Chrome/Safari'de açık `open.spotify.com` sekmesinin başlığından durumu çıkarır.
-    /// Web player başlığı çalarken "Şarkı • Sanatçı", duraklatınca yalnızca "Spotify"
-    /// olur; boş başlık ise o tarayıcıda Spotify sekmesi yok demektir.
-    nonisolated private static func webSpotify(chrome: Bool, safari: Bool) -> WebSpotifyState {
-        var browsers: [(app: String, titleProperty: String)] = []
-        if chrome { browsers.append(("Google Chrome", "title")) }
-        if safari { browsers.append(("Safari", "name")) }
-        var tabPresent = false
-        for (app, titleProperty) in browsers {
-            let script = """
-            tell application "\(app)"
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        if (URL of t) contains "open.spotify.com" then return (\(titleProperty) of t)
-                    end repeat
-                end repeat
-            end tell
-            return ""
+    nonisolated private static func querySpotify() -> NowPlaying? {
+        let result = runScript(
             """
-            guard let title = runScript(script)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !title.isEmpty else { continue }
-            // Boş olmayan başlık → bu tarayıcıda bir Spotify sekmesi mevcut.
-            tabPresent = true
-            if let playing = parseSpotifyWebTitle(title) { return .playing(playing) }
-        }
-        return tabPresent ? .pausedTabPresent : .absent
-    }
-
-    nonisolated private static func parseSpotifyWebTitle(_ title: String) -> NowPlaying? {
-        // Ayraç bullet (U+2022) etrafında boşluklu. Yoksa (yalnızca "Spotify") çalmıyor.
-        let separator = " • "
-        guard title.contains(separator) else { return nil }
-        let parts = title.components(separatedBy: separator)
-        let track = parts[0].trimmingCharacters(in: .whitespaces)
-        let artist = parts.dropFirst().joined(separator: separator).trimmingCharacters(in: .whitespaces)
-        guard !track.isEmpty else { return nil }
+            tell application "Spotify"
+                if player state is stopped then return "stopped"
+                set t to current track
+                return (player state as string) & "|~|" & (name of t) & "|~|" & (artist of t) & "|~|" & ((duration of t) / 1000) & "|~|" & player position & "|~|" & (artwork url of t)
+            end tell
+            """
+        )
+        guard let parts = split(result), parts.count >= 6 else { return nil }
         return NowPlaying(
-            source: .spotify, title: track, artist: artist,
-            isPlaying: true, duration: 0, position: 0, isWeb: true
+            sourceLabel: "Spotify",
+            bundleID: spotifyBundleID,
+            title: parts[1],
+            artist: parts[2],
+            isPlaying: parts[0] == "playing",
+            duration: Double(parts[3]) ?? 0,
+            position: Double(parts[4]) ?? 0,
+            artworkURL: parts[5].isEmpty ? nil : parts[5]
         )
     }
 
-    private func refreshArtworkIfNeeded(for playing: NowPlaying?, spotifyArtURL: String?) {
+    nonisolated private static func queryAppleMusic() -> NowPlaying? {
+        let result = runScript(
+            """
+            tell application "Music"
+                if player state is stopped then return "stopped"
+                try
+                    set t to current track
+                    return (player state as string) & "|~|" & (name of t) & "|~|" & (artist of t) & "|~|" & (duration of t) & "|~|" & player position
+                on error
+                    return "stopped"
+                end try
+            end tell
+            """
+        )
+        guard let parts = split(result), parts.count >= 5 else { return nil }
+        return NowPlaying(
+            sourceLabel: "Apple Music",
+            bundleID: musicBundleID,
+            title: parts[1],
+            artist: parts[2],
+            isPlaying: parts[0] == "playing",
+            duration: Double(parts[3]) ?? 0,
+            position: Double(parts[4]) ?? 0
+        )
+    }
+
+    // MARK: - Universal Browser Media Query
+
+    private struct BrowserMediaResult {
+        var nowPlaying: NowPlaying
+        var jsPermissionMissing: Bool
+    }
+
+    private struct RawTab {
+        let windowIndex: Int
+        let tabIndex: Int
+        let isActive: Bool
+        let title: String
+        let url: String
+    }
+
+    nonisolated private static func queryBrowser(
+        _ browser: BrowserSpec,
+        isOutputtingAudio: Bool
+    ) -> BrowserMediaResult? {
+        switch browser.kind {
+        case .windowTitleOnly:
+            return queryWindowTitleBrowser(browser, isOutputtingAudio: isOutputtingAudio)
+        case .chromium, .safari:
+            let tabs = listTabs(for: browser)
+            guard !tabs.isEmpty else { return nil }
+
+            // Clasificar pestañas multimedia conocidas (YouTube, YT Music, Spotify, Twitch, SoundCloud, etc.)
+            let scored: [(tab: RawTab, score: Int, siteName: String?)] = tabs.compactMap { tab in
+                let site = classifyMediaSite(url: tab.url, title: tab.title)
+                if let site {
+                    // Priorizamos la pestaña activa si hay varias multimedia abiertas
+                    let base = site.priority + (tab.isActive ? 15 : 0)
+                    return (tab, base, site.name)
+                } else if isOutputtingAudio && tab.isActive && !tab.title.isEmpty && !tab.url.hasPrefix("chrome://") && !tab.url.hasPrefix("brave://") && !tab.url.hasPrefix("about:") {
+                    // Cualquier otra web app abierta en la pestaña activa cuando este navegador emite sonido
+                    return (tab, 10, hostLabel(from: tab.url))
+                }
+                return nil
+            }
+
+            guard let best = scored.max(by: { $0.score < $1.score }) else { return nil }
+            let target = best.tab
+            let siteName = best.siteName
+
+            // Intentamos leer estado HTML5 / MediaSession vía JS si el navegador lo tiene habilitado
+            var jsMissing = false
+            var playing = isOutputtingAudio
+            var duration: Double = 0
+            var position: Double = 0
+            var parsed = cleanTabTitle(target.title, siteName: siteName)
+            var artworkURL: String? = nil
+
+            if let jsRaw = executeTabJS(browser: browser, windowIndex: target.windowIndex, tabIndex: target.tabIndex, js: mediaProbeJS),
+               jsRaw != "no-media" {
+                let fields = jsRaw.components(separatedBy: "|~|")
+                if fields.count >= 6 {
+                    let domPlaying = fields[0] == "1"
+                    // Si CoreAudio o el DOM reportan reproducción activa
+                    playing = domPlaying || isOutputtingAudio
+                    position = Double(fields[1]) ?? 0
+                    duration = Double(fields[2]) ?? 0
+                    let msTitle = fields[3].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let msArtist = fields[4].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let msArt = fields[5].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !msTitle.isEmpty { parsed.title = msTitle }
+                    if !msArtist.isEmpty { parsed.artist = msArtist }
+                    if !msArt.isEmpty { artworkURL = msArt }
+                }
+            } else {
+                jsMissing = true
+            }
+
+            // Enriquecimiento automático para YouTube sin requerir JS (miniatura HD + canal vía oEmbed)
+            if let ytID = extractYouTubeID(from: target.url) {
+                if artworkURL == nil {
+                    artworkURL = "https://i.ytimg.com/vi/\(ytID)/hqdefault.jpg"
+                }
+                if parsed.artist.isEmpty || parsed.artist == siteName || parsed.artist == browser.shortName {
+                    if let author = fetchYouTubeAuthor(videoID: ytID) {
+                        parsed.artist = author
+                    }
+                }
+            }
+
+            // Si es una pestaña que NO es de música/video dedicada y tampoco está sonando, no ensuciar el notch
+            if !playing && siteName == nil {
+                return nil
+            }
+            // En Spotify Web pausado, el título queda solo "Spotify"
+            if parsed.title.isEmpty || (siteName == "Spotify" && parsed.title == "Spotify" && !playing) {
+                return nil
+            }
+
+            let sourceLabel = siteName != nil ? "\(siteName!) · \(browser.shortName)" : browser.shortName
+            let artistLabel = parsed.artist.isEmpty ? (siteName ?? browser.shortName) : parsed.artist
+
+            let np = NowPlaying(
+                sourceLabel: sourceLabel,
+                bundleID: browser.bundleID,
+                title: parsed.title,
+                artist: artistLabel,
+                isPlaying: playing,
+                duration: duration,
+                position: position,
+                isWeb: true,
+                artworkURL: artworkURL,
+                webBrowserApp: browser.appName,
+                webWindowIndex: target.windowIndex,
+                webTabIndex: target.tabIndex
+            )
+            return BrowserMediaResult(nowPlaying: np, jsPermissionMissing: jsMissing)
+        }
+    }
+
+    nonisolated private static func listTabs(for browser: BrowserSpec) -> [RawTab] {
+        let script: String
+        switch browser.kind {
+        case .chromium:
+            script = """
+            tell application "\(browser.appName)"
+                set out to ""
+                set wIdx to 0
+                repeat with w in windows
+                    set wIdx to wIdx + 1
+                    set actIdx to active tab index of w
+                    set tIdx to 0
+                    repeat with t in tabs of w
+                        set tIdx to tIdx + 1
+                        set isAct to "0"
+                        if tIdx is actIdx then set isAct to "1"
+                        set out to out & wIdx & "|^|" & tIdx & "|^|" & isAct & "|^|" & (title of t) & "|^|" & (URL of t) & "\\n"
+                    end repeat
+                end repeat
+                return out
+            end tell
+            """
+        case .safari:
+            script = """
+            tell application "Safari"
+                set out to ""
+                set wIdx to 0
+                repeat with w in windows
+                    set wIdx to wIdx + 1
+                    try
+                        set curTab to current tab of w
+                    on error
+                        set curTab to missing value
+                    end try
+                    set tIdx to 0
+                    repeat with t in tabs of w
+                        set tIdx to tIdx + 1
+                        set isAct to "0"
+                        try
+                            if t is curTab then set isAct to "1"
+                        end try
+                        set out to out & wIdx & "|^|" & tIdx & "|^|" & isAct & "|^|" & (name of t) & "|^|" & (URL of t) & "\\n"
+                    end repeat
+                end repeat
+                return out
+            end tell
+            """
+        case .windowTitleOnly:
+            return []
+        }
+
+        guard let raw = runScript(script), !raw.isEmpty else { return [] }
+        var tabs: [RawTab] = []
+        for line in raw.components(separatedBy: "\n") where !line.isEmpty {
+            let parts = line.components(separatedBy: "|^|")
+            guard parts.count >= 5,
+                  let wIdx = Int(parts[0]),
+                  let tIdx = Int(parts[1]) else { continue }
+            tabs.append(
+                RawTab(
+                    windowIndex: wIdx,
+                    tabIndex: tIdx,
+                    isActive: parts[2] == "1",
+                    title: parts[3],
+                    url: parts[4]
+                )
+            )
+        }
+        return tabs
+    }
+
+    /// Soporte para Zen Browser / Firefox leyendo el título de su ventana cuando emite audio o muestra YouTube.
+    nonisolated private static func queryWindowTitleBrowser(
+        _ browser: BrowserSpec,
+        isOutputtingAudio: Bool
+    ) -> BrowserMediaResult? {
+        // Solo consultamos System Events si realmente está sonando para no molestar en reposo.
+        guard isOutputtingAudio else { return nil }
+        let script = """
+        tell application "System Events"
+            tell process "\(browser.appName)"
+                if (count of windows) is 0 then return ""
+                return name of window 1
+            end tell
+        end tell
+        """
+        guard let rawTitle = runScript(script)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawTitle.isEmpty else { return nil }
+
+        var cleaned = rawTitle
+        for suffix in [" — Zen Browser", " - Zen Browser", " — Zen", " — Mozilla Firefox", " - Mozilla Firefox"] {
+            if cleaned.hasSuffix(suffix) {
+                cleaned = String(cleaned.dropLast(suffix.count))
+            }
+        }
+        let site: String? = cleaned.contains("YouTube") ? "YouTube" : nil
+        let parsed = cleanTabTitle(cleaned, siteName: site)
+        let label = site != nil ? "\(site!) · \(browser.shortName)" : browser.shortName
+        let np = NowPlaying(
+            sourceLabel: label,
+            bundleID: browser.bundleID,
+            title: parsed.title.isEmpty ? cleaned : parsed.title,
+            artist: parsed.artist.isEmpty ? browser.shortName : parsed.artist,
+            isPlaying: true,
+            duration: 0,
+            position: 0,
+            isWeb: true,
+            webBrowserApp: browser.appName
+        )
+        return BrowserMediaResult(nowPlaying: np, jsPermissionMissing: false)
+    }
+
+    private struct MediaSiteInfo {
+        let name: String
+        let priority: Int
+    }
+
+    nonisolated private static func classifyMediaSite(url: String, title: String) -> MediaSiteInfo? {
+        let u = url.lowercased()
+        if u.contains("music.youtube.com") {
+            return MediaSiteInfo(name: "YT Music", priority: 95)
+        }
+        if u.contains("youtube.com/watch") || u.contains("youtube.com/shorts/") || u.contains("youtube.com/live/") || u.contains("youtu.be/") {
+            return MediaSiteInfo(name: "YouTube", priority: 90)
+        }
+        if u.contains("open.spotify.com") {
+            return MediaSiteInfo(name: "Spotify", priority: 92)
+        }
+        if u.contains("soundcloud.com/") && u != "https://soundcloud.com/" && !u.hasSuffix("soundcloud.com/discover") {
+            return MediaSiteInfo(name: "SoundCloud", priority: 85)
+        }
+        if u.contains("twitch.tv/") && u != "https://www.twitch.tv/" {
+            return MediaSiteInfo(name: "Twitch", priority: 84)
+        }
+        if u.contains("kick.com/") && u != "https://kick.com/" {
+            return MediaSiteInfo(name: "Kick", priority: 82)
+        }
+        if u.contains("music.apple.com") {
+            return MediaSiteInfo(name: "Apple Music", priority: 88)
+        }
+        if u.contains("netflix.com/watch") {
+            return MediaSiteInfo(name: "Netflix", priority: 85)
+        }
+        if u.contains("primevideo.com") && (u.contains("detail") || u.contains("watch")) {
+            return MediaSiteInfo(name: "Prime Video", priority: 80)
+        }
+        if u.contains("disneyplus.com") && u.contains("video") {
+            return MediaSiteInfo(name: "Disney+", priority: 80)
+        }
+        if u.contains("play.max.com/video") {
+            return MediaSiteInfo(name: "Max", priority: 80)
+        }
+        if u.contains("deezer.com") || u.contains("tidal.com") || u.contains("bandcamp.com") {
+            return MediaSiteInfo(name: hostLabel(from: u), priority: 80)
+        }
+        return nil
+    }
+
+    nonisolated private static func hostLabel(from urlString: String) -> String {
+        guard let host = URL(string: urlString)?.host?.lowercased() else { return "Web" }
+        let stripped = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        let first = stripped.split(separator: ".").first.map(String.init) ?? stripped
+        return first.prefix(1).uppercased() + first.dropFirst()
+    }
+
+    nonisolated private static func cleanTabTitle(_ raw: String, siteName: String?) -> (title: String, artist: String) {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Quitar prefijo de notificaciones tipo "(3) Video..." o "🔊 "
+        if let regex = try? NSRegularExpression(pattern: #"^(\(\d+\)\s*|🔊\s*|▶\s*)+"#) {
+            let range = NSRange(t.startIndex..<t.endIndex, in: t)
+            t = regex.stringByReplacingMatches(in: t, range: range, withTemplate: "")
+        }
+
+        let suffixes = [
+            " - YouTube Music",
+            " - YouTube",
+            " - Twitch",
+            " | Kick",
+            " - SoundCloud",
+            " | Spotify",
+        ]
+        for suffix in suffixes where t.hasSuffix(suffix) {
+            t = String(t.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        }
+
+        // Spotify Web usa "Canción • Artista"
+        if siteName == "Spotify", t.contains(" • ") {
+            let parts = t.components(separatedBy: " • ")
+            return (parts[0].trimmingCharacters(in: .whitespaces), parts.dropFirst().joined(separator: " • "))
+        }
+        // SoundCloud usa "Track by Artist" o "Artist - Track"
+        if siteName == "SoundCloud", let range = t.range(of: " by ", options: .backwards) {
+            let track = String(t[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let artist = String(t[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+            return (track, artist)
+        }
+        return (t, siteName ?? "")
+    }
+
+    nonisolated private static func extractYouTubeID(from urlString: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        let host = (url.host ?? "").lowercased()
+        if host.contains("youtu.be") {
+            let id = url.pathComponents.dropFirst().first ?? ""
+            return id.isEmpty ? nil : id
+        }
+        if host.contains("youtube.com") {
+            if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let v = comps.queryItems?.first(where: { $0.name == "v" })?.value, !v.isEmpty {
+                return v
+            }
+            let parts = url.pathComponents
+            if let idx = parts.firstIndex(where: { $0 == "shorts" || $0 == "live" }),
+               idx + 1 < parts.count {
+                return parts[idx + 1]
+            }
+        }
+        return nil
+    }
+
+    /// Obtiene el nombre real del canal de YouTube vía oEmbed público y lo guarda en caché.
+    nonisolated private static func fetchYouTubeAuthor(videoID: String) -> String? {
+        let key = videoID as NSString
+        if let cached = ytMetaCache.object(forKey: key),
+           let author = cached["author"] as? String {
+            return author.isEmpty ? nil : author
+        }
+        guard let oembedURL = URL(string: "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=\(videoID)&format=json") else {
+            return nil
+        }
+        var request = URLRequest(url: oembedURL)
+        request.timeoutInterval = 2.0
+        let sem = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var authorResult: String?
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            defer { sem.signal() }
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let author = json["author_name"] as? String else { return }
+            authorResult = author
+        }.resume()
+        _ = sem.wait(timeout: .now() + 2.0)
+        ytMetaCache.setObject(["author": authorResult ?? ""] as NSDictionary, forKey: key)
+        return authorResult
+    }
+
+    // MARK: - Browser JS Probe & Execution
+
+    /// Lee cualquier elemento `<video>` o `<audio>` + `navigator.mediaSession.metadata` en la pestaña.
+    nonisolated private static var mediaProbeJS: String {
+        """
+        (function(){
+          var els = Array.from(document.querySelectorAll('video,audio'));
+          var m = els.find(function(e){ return !e.paused && !e.ended; }) || els.sort(function(a,b){ return (b.duration||0)-(a.duration||0); })[0];
+          var ms = navigator.mediaSession && navigator.mediaSession.metadata;
+          if (!m && !ms) return 'no-media';
+          var playing = (m && !m.paused && !m.ended) ? '1' : '0';
+          var pos = (m && isFinite(m.currentTime)) ? m.currentTime : 0;
+          var dur = (m && isFinite(m.duration) && m.duration > 0) ? m.duration : 0;
+          var title = ms && ms.title ? ms.title : '';
+          var artist = ms && ms.artist ? ms.artist : '';
+          var art = (ms && ms.artwork && ms.artwork.length) ? ms.artwork[ms.artwork.length-1].src : '';
+          return [playing, pos, dur, title, artist, art].join('|~|');
+        })()
+        """
+    }
+
+    nonisolated private static func executeTabJS(
+        browser: BrowserSpec,
+        windowIndex: Int,
+        tabIndex: Int,
+        js: String
+    ) -> String? {
+        let escaped = js
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+
+        let script: String
+        switch browser.kind {
+        case .chromium:
+            script = """
+            tell application "\(browser.appName)"
+                if (count of windows) < \(windowIndex) then return ""
+                set w to window \(windowIndex)
+                if (count of tabs of w) < \(tabIndex) then return ""
+                return execute (tab \(tabIndex) of w) javascript "\(escaped)"
+            end tell
+            """
+        case .safari:
+            script = """
+            tell application "Safari"
+                if (count of windows) < \(windowIndex) then return ""
+                set w to window \(windowIndex)
+                if (count of tabs of w) < \(tabIndex) then return ""
+                return do JavaScript "\(escaped)" in (tab \(tabIndex) of w)
+            end tell
+            """
+        case .windowTitleOnly:
+            return nil
+        }
+        guard let out = runScript(script), !out.isEmpty else { return nil }
+        return out
+    }
+
+    // MARK: - Artwork Loading
+
+    private func refreshArtworkIfNeeded(for playing: NowPlaying?) {
         guard let playing else {
             artwork = nil
             lastArtworkKey = ""
@@ -290,33 +803,33 @@ final class MusicManager: ObservableObject {
         }
         guard playing.trackKey != lastArtworkKey else { return }
         lastArtworkKey = playing.trackKey
-
-        // Web player'dan kapak resmi alınamaz; eski kapağı temizle.
-        if playing.isWeb {
-            artwork = nil
-            return
-        }
-
         let key = playing.trackKey
-        // Aynı parçaya geri dönüldüğünde tekrar indirmemek/çözmemek için önbellek.
+
         if let cached = artworkCache.object(forKey: key as NSString) {
             artwork = cached
             return
         }
 
-        switch playing.source {
-        case .spotify:
-            guard let raw = spotifyArtURL, let url = URL(string: raw) else { return }
+        // 1. Si tenemos URL de imagen (Spotify, YouTube thumbnail, MediaSession artwork)
+        if let raw = playing.artworkURL, let url = URL(string: raw) {
+            let fallbackIcon = appIcon(for: playing.bundleID)
             URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                guard let data, let image = NSImage(data: data) else { return }
+                let loaded = data.flatMap { NSImage(data: $0) }
                 Task { @MainActor in
                     guard let self else { return }
-                    self.artworkCache.setObject(image, forKey: key as NSString)
+                    let finalImage = loaded ?? fallbackIcon
+                    if let finalImage {
+                        self.artworkCache.setObject(finalImage, forKey: key as NSString)
+                    }
                     guard self.lastArtworkKey == key else { return }
-                    self.artwork = image
+                    self.artwork = finalImage
                 }
             }.resume()
-        case .appleMusic:
+            return
+        }
+
+        // 2. Apple Music nativo
+        if playing.bundleID == Self.musicBundleID && !playing.isWeb {
             scriptQueue.async { [weak self] in
                 let descriptor = Self.runScriptDescriptor(
                     """
@@ -329,25 +842,42 @@ final class MusicManager: ObservableObject {
                     end tell
                     """
                 )
-                guard let data = descriptor?.data, data.count > 32,
-                      let image = NSImage(data: data) else {
-                    Task { @MainActor in
-                        guard let self, self.lastArtworkKey == key else { return }
-                        self.artwork = nil
-                    }
-                    return
+                let img: NSImage?
+                if let data = descriptor?.data, data.count > 32, let decoded = NSImage(data: data) {
+                    img = decoded
+                } else {
+                    img = nil
                 }
                 Task { @MainActor in
                     guard let self else { return }
-                    self.artworkCache.setObject(image, forKey: key as NSString)
+                    let finalImg = img ?? self.appIcon(for: playing.bundleID)
+                    if let finalImg {
+                        self.artworkCache.setObject(finalImg, forKey: key as NSString)
+                    }
                     guard self.lastArtworkKey == key else { return }
-                    self.artwork = image
+                    self.artwork = finalImg
                 }
             }
+            return
         }
+
+        // 3. Fallback: ícono real de la aplicación o navegador que está sonando
+        let icon = appIcon(for: playing.bundleID)
+        if let icon {
+            artworkCache.setObject(icon, forKey: key as NSString)
+        }
+        artwork = icon
     }
 
-    // MARK: - Controls
+    private func appIcon(for bundleID: String?) -> NSImage? {
+        guard let bundleID,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    // MARK: - Playback & Focus Controls
 
     private enum Playback {
         case playPause, next, previous
@@ -359,15 +889,7 @@ final class MusicManager: ObservableObject {
             case .previous: return "previous track"
             }
         }
-        /// Spotify web player'daki kontrol düğmesinin data-testid'si.
-        var webTestID: String {
-            switch self {
-            case .playPause: return "control-button-playpause"
-            case .next: return "control-button-skip-forward"
-            case .previous: return "control-button-skip-back"
-            }
-        }
-        /// NX_KEYTYPE_PLAY / NEXT / PREVIOUS — donanım medya tuşlarının ürettiği aynı sistem olayı.
+
         var mediaKey: Int32 {
             switch self {
             case .playPause: return 16
@@ -381,50 +903,163 @@ final class MusicManager: ObservableObject {
     func nextTrack() { control(.next) }
     func previousTrack() { control(.previous) }
 
-    /// `fraction`: 0...1 — parça süresi boyunca oran. Native oynatıcıda gerçek saniyeye,
-    /// web'de ilerleme çubuğu üzerinde bir tıklamayı simüle etmek için kullanılır.
-    func seek(toFraction fraction: Double) {
+    /// Lleva al frente la aplicación o pestaña exacta que está sonando al tocar la carátula.
+    func activateSource() {
         guard let playing = nowPlaying else { return }
+        if playing.isWeb,
+           let appName = playing.webBrowserApp,
+           let wIdx = playing.webWindowIndex,
+           let tIdx = playing.webTabIndex,
+           let spec = Self.browsers.first(where: { $0.appName == appName }) {
+            scriptQueue.async {
+                let script: String
+                switch spec.kind {
+                case .chromium:
+                    script = """
+                    tell application "\(appName)"
+                        if (count of windows) >= \(wIdx) then
+                            set active tab index of window \(wIdx) to \(tIdx)
+                            set index of window \(wIdx) to 1
+                        end if
+                        activate
+                    end tell
+                    """
+                case .safari:
+                    script = """
+                    tell application "Safari"
+                        if (count of windows) >= \(wIdx) then
+                            set current tab of window \(wIdx) to tab \(tIdx) of window \(wIdx)
+                            set index of window \(wIdx) to 1
+                        end if
+                        activate
+                    end tell
+                    """
+                case .windowTitleOnly:
+                    script = "tell application \"\(appName)\" to activate"
+                }
+                _ = Self.runScript(script)
+            }
+            return
+        }
+        if let bid = playing.bundleID,
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first {
+            app.activate()
+        }
+    }
+
+    func seek(toFraction fraction: Double) {
+        guard let playing = nowPlaying, playing.duration > 0 else { return }
         let clamped = min(max(fraction, 0), 1)
-        if playing.isWeb {
-            scriptQueue.async { _ = Self.runBrowserJS(Self.seekJS(fraction: clamped)) }
-        } else {
-            let app = playing.source == .spotify ? "Spotify" : "Music"
-            let position = Int(clamped * playing.duration)
+        let targetSec = clamped * playing.duration
+
+        if playing.isWeb,
+           let appName = playing.webBrowserApp,
+           let wIdx = playing.webWindowIndex,
+           let tIdx = playing.webTabIndex,
+           let spec = Self.browsers.first(where: { $0.appName == appName }) {
+            let js = """
+            (function(){
+              var els = Array.from(document.querySelectorAll('video,audio'));
+              var m = els.find(function(e){ return !e.paused; }) || els[0];
+              if (m && isFinite(m.duration)) { m.currentTime = \(targetSec); return 'ok'; }
+              return 'missing';
+            })()
+            """
+            scriptQueue.async {
+                _ = Self.executeTabJS(browser: spec, windowIndex: wIdx, tabIndex: tIdx, js: js)
+            }
+        } else if playing.bundleID == Self.spotifyBundleID || playing.bundleID == Self.musicBundleID {
+            let app = playing.bundleID == Self.spotifyBundleID ? "Spotify" : "Music"
+            let position = Int(targetSec)
             scriptQueue.async {
                 _ = Self.runScript("tell application \"\(app)\" to set player position to \(position)")
             }
-            // Native seek asenkron uygulanır; kuşağı artır ki bu andan ÖNCE başlamış
-            // poll'ların bayat pozisyonu yok sayılsın (seek'ten sonra başlayan poll
-            // gerçek pozisyonu yansıtır ve bastırma kendiliğinden biter).
-            seekGeneration += 1
-            lastSeek = (playing.trackKey, clamped * playing.duration, seekGeneration)
         }
-        nowPlaying?.position = clamped * playing.duration
+        seekGeneration += 1
+        lastSeek = (playing.trackKey, targetSec, seekGeneration)
+        nowPlaying?.position = targetSec
     }
 
     private func control(_ playback: Playback) {
-        guard let playing = nowPlaying else { return }
+        guard let playing = nowPlaying else {
+            Self.postMediaKey(playback.mediaKey)
+            return
+        }
+
         if playing.isWeb {
             scriptQueue.async { [weak self] in
-                // Önce web player'ın kendi düğmesine tıklamayı dene (JS Apple Events'ten kapalıysa
-                // nil döner); olmazsa donanım medya tuşunu simüle et — ikisi de aynı sonucu verir.
-                if Self.runBrowserJS(Self.clickJS(testID: playback.webTestID)) == nil {
+                var handledViaJS = false
+                if let appName = playing.webBrowserApp,
+                   let wIdx = playing.webWindowIndex,
+                   let tIdx = playing.webTabIndex,
+                   let spec = Self.browsers.first(where: { $0.appName == appName }) {
+                    let js = Self.webControlJS(for: playback)
+                    if Self.executeTabJS(browser: spec, windowIndex: wIdx, tabIndex: tIdx, js: js) == "ok" {
+                        handledViaJS = true
+                    }
+                }
+                if !handledViaJS {
                     Self.postMediaKey(playback.mediaKey)
                 }
+                Task {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    await MainActor.run { self?.poll() }
+                }
+            }
+            return
+        }
+
+        if playing.bundleID == Self.spotifyBundleID || playing.bundleID == Self.musicBundleID {
+            let app = playing.bundleID == Self.spotifyBundleID ? "Spotify" : "Music"
+            scriptQueue.async { [weak self] in
+                _ = Self.runScript("tell application \"\(app)\" to \(playback.appleScriptCommand)")
                 Task { @MainActor in self?.poll() }
             }
             return
         }
-        let app = playing.source == .spotify ? "Spotify" : "Music"
-        scriptQueue.async { [weak self] in
-            _ = Self.runScript("tell application \"\(app)\" to \(playback.appleScriptCommand)")
-            Task { @MainActor in self?.poll() }
+
+        // Otras apps nativas con audio → tecla multimedia global de macOS
+        Self.postMediaKey(playback.mediaKey)
+        Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            poll()
         }
     }
 
-    /// Donanım medya tuşuyla aynı sistem olayını (NX_KEYTYPE_*) üretir; hangi uygulamanın
-    /// bunu aldığını macOS kendi "now playing" sahibine göre belirler (fiziksel tuşla aynı davranış).
+    nonisolated private static func webControlJS(for playback: Playback) -> String {
+        switch playback {
+        case .playPause:
+            return """
+            (function(){
+              var b = document.querySelector('[data-testid="control-button-playpause"], .ytp-play-button, .playControl');
+              var els = Array.from(document.querySelectorAll('video,audio'));
+              var m = els.find(function(e){ return !e.paused; }) || els[0];
+              if (m) { if (m.paused) m.play(); else m.pause(); return 'ok'; }
+              if (b) { b.click(); return 'ok'; }
+              return 'missing';
+            })()
+            """
+        case .next:
+            return """
+            (function(){
+              var b = document.querySelector('[data-testid="control-button-skip-forward"], .ytp-next-button, .skipControl__next');
+              if (b) { b.click(); return 'ok'; }
+              return 'missing';
+            })()
+            """
+        case .previous:
+            return """
+            (function(){
+              var b = document.querySelector('[data-testid="control-button-skip-back"], .ytp-prev-button, .skipControl__previous');
+              if (b && b.offsetParent !== null) { b.click(); return 'ok'; }
+              var m = document.querySelector('video,audio');
+              if (m) { m.currentTime = 0; return 'ok'; }
+              return 'missing';
+            })()
+            """
+        }
+    }
+
     nonisolated private static func postMediaKey(_ key: Int32) {
         for keyDown in [true, false] {
             let flags = NSEvent.ModifierFlags(rawValue: keyDown ? 0xa00 : 0xb00)
@@ -438,105 +1073,13 @@ final class MusicManager: ObservableObject {
         }
     }
 
-    // MARK: - Web (tarayıcı) JavaScript köprüsü
-
-    /// Chrome/Safari'de açık open.spotify.com sekmesinde JS çalıştırır. Bunun için tarayıcıda
-    /// "View > Developer > Allow JavaScript from Apple Events" açık olmalı; kapalıysa (veya
-    /// sekme yoksa) nil döner — çağıran taraf bunu "web JS kullanılamıyor" olarak ele alır.
-    nonisolated private static func runBrowserJS(_ js: String) -> String? {
-        let script = escapeForAppleScript(js)
-        if isRunning(chromeBundleID),
-           let result = runScript(chromeJSScript(script)), result != "no-tab" {
-            return result
-        }
-        if isRunning(safariBundleID),
-           let result = runScript(safariJSScript(script)), result != "no-tab" {
-            return result
-        }
-        return nil
-    }
-
-    nonisolated private static func escapeForAppleScript(_ js: String) -> String {
-        js.replacingOccurrences(of: "\"", with: "\\\"")
-    }
-
-    nonisolated private static func chromeJSScript(_ escapedJS: String) -> String {
-        """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "open.spotify.com" then
-                        return execute t javascript "\(escapedJS)"
-                    end if
-                end repeat
-            end repeat
-        end tell
-        return "no-tab"
-        """
-    }
-
-    nonisolated private static func safariJSScript(_ escapedJS: String) -> String {
-        """
-        tell application "Safari"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "open.spotify.com" then
-                        return do JavaScript "\(escapedJS)" in t
-                    end if
-                end repeat
-            end repeat
-        end tell
-        return "no-tab"
-        """
-    }
-
-    nonisolated private static func clickJS(testID: String) -> String {
-        "(function(){var b=document.querySelector('[data-testid=\"\(testID)\"]');" +
-        "if(b){b.click();return 'ok';}return 'missing';})()"
-    }
-
-    /// "pozisyon|~|süre" (ör. "1:23|~|3:45") döndürür.
-    nonisolated private static var playbackTimeJS: String {
-        "(function(){var p=document.querySelector('[data-testid=\"playback-position\"]');" +
-        "var d=document.querySelector('[data-testid=\"playback-duration\"]');" +
-        "return (p?p.textContent:'')+'|~|'+(d?d.textContent:'');})()"
-    }
-
-    /// İlerleme çubuğunun `fraction` (0...1) noktasında gerçek bir tıklamayı simüle eder —
-    /// Spotify'ın ilerleme çubuğu native bir <input> değil, sürüklenebilir bir div olduğundan.
-    nonisolated private static func seekJS(fraction: Double) -> String {
-        "(function(){var bg=document.querySelector('[data-testid=\"progress-bar-background\"]');" +
-        "if(!bg)return 'missing';var r=bg.getBoundingClientRect();" +
-        "var x=r.left+r.width*\(fraction);var y=r.top+r.height/2;" +
-        "var o={bubbles:true,cancelable:true,clientX:x,clientY:y,button:0};" +
-        "bg.dispatchEvent(new PointerEvent('pointerdown',o));" +
-        "bg.dispatchEvent(new MouseEvent('mousedown',o));" +
-        "window.dispatchEvent(new PointerEvent('pointermove',o));" +
-        "window.dispatchEvent(new MouseEvent('mousemove',o));" +
-        "window.dispatchEvent(new PointerEvent('pointerup',o));" +
-        "window.dispatchEvent(new MouseEvent('mouseup',o));" +
-        "bg.dispatchEvent(new MouseEvent('click',o));return 'ok';})()"
-    }
-
-    /// "1:23" veya "1:02:03" biçimindeki metni saniyeye çevirir.
-    nonisolated private static func parseTimecode(_ text: String) -> Double? {
-        let rawParts = text.trimmingCharacters(in: .whitespaces).components(separatedBy: ":")
-        let parts = rawParts.compactMap { Int($0) }
-        guard !parts.isEmpty, parts.count == rawParts.count else { return nil }
-        return parts.reversed().enumerated().reduce(0.0) { total, item in
-            total + Double(item.element) * pow(60, Double(item.offset))
-        }
-    }
-
-    // MARK: - AppleScript helpers
+    // MARK: - AppleScript Helpers
 
     nonisolated private static func split(_ result: String?) -> [String]? {
         guard let result, result != "stopped", !result.isEmpty else { return nil }
         return result.components(separatedBy: "|~|")
     }
 
-    /// Bu poll turunda -1743 (otomasyon izni reddedildi) görüldü mü.
-    /// Yalnızca seri `scriptQueue` üzerinde okunup yazılır — yarış yok.
     nonisolated(unsafe) private static var sawAutomationDenied = false
 
     nonisolated private static func runScript(_ source: String) -> String? {
@@ -548,12 +1091,9 @@ final class MusicManager: ObservableObject {
         var error: NSDictionary?
         let descriptor = script.executeAndReturnError(&error)
         if let error {
-            // Hata numarası -1743 → otomasyon (Apple Events) izni verilmemiş.
-            // Böylece "izin yok" ile "çalmıyor" ayırt edilebilir; sessizce yutulmuyor.
             if (error[NSAppleScript.errorNumber] as? Int) == -1743 {
                 sawAutomationDenied = true
             }
-            log.error("AppleScript hatası: \(error, privacy: .public)")
             return nil
         }
         return descriptor

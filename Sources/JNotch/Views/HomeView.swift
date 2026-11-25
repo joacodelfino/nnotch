@@ -41,17 +41,19 @@ struct MusicCard: View {
                             .foregroundStyle(.white.opacity(0.55))
                             .lineLimit(1)
                         Spacer(minLength: 0)
-                        Text(playing.source.rawValue)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.35))
+                        HStack(spacing: 4) {
+                            Image(systemName: playing.isWeb ? "globe" : "waveform")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text(playing.sourceLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(prefs.accentColor.opacity(0.85))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 progressBar(playing)
                 controls
-                if playing.isWeb && music.webJSPermissionMissing {
-                    permissionHint
-                }
             } else if music.automationDenied {
                 VStack(spacing: 8) {
                     Spacer()
@@ -79,12 +81,13 @@ struct MusicCard: View {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 26))
                         .foregroundStyle(.white.opacity(0.25))
-                    Text("Sin música en reproducción")
+                    Text("Sin audio en reproducción")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white.opacity(0.5))
-                    Text("Abrí Apple Music o Spotify")
+                    Text("YouTube, navegador, Spotify o Apple Music")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.3))
+                        .multilineTextAlignment(.center)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
@@ -93,36 +96,30 @@ struct MusicCard: View {
         .islandCard()
     }
 
-    private var permissionHint: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "info.circle")
-            Text("Para barra de progreso en web, habilitá JavaScript desde Apple Events")
-                .lineLimit(2)
-        }
-        .font(.system(size: 8.5))
-        .foregroundStyle(.white.opacity(0.4))
-        .help("Chrome: Ver ▸ Desarrollador ▸ \"Permitir JavaScript de eventos Apple\".\n"
-            + "Safari: Desarrollo ▸ \"Permitir JavaScript de eventos Apple\".")
-    }
-
     @ViewBuilder
     private var artworkView: some View {
-        if let artwork = music.artwork {
-            Image(nsImage: artwork)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 84, height: 84)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        } else {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-                .frame(width: 84, height: 84)
-                .overlay(
-                    Image(systemName: "music.note")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.white.opacity(0.3))
-                )
+        Button {
+            music.activateSource()
+        } label: {
+            if let artwork = music.artwork {
+                Image(nsImage: artwork)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 84, height: 84)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 84, height: 84)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.white.opacity(0.3))
+                    )
+            }
         }
+        .buttonStyle(.plain)
+        .help("Ir a la aplicación o pestaña en reproducción")
     }
 
     private func progressBar(_ playing: NowPlaying) -> some View {
@@ -290,51 +287,154 @@ struct ShelfDropZone: View {
 
 struct ShortcutsRow: View {
     @EnvironmentObject private var shortcuts: AppShortcutsStore
+    @EnvironmentObject private var prefs: Preferences
+    @State private var isEditing = false
+    @State private var isDropTargeted = false
 
     var body: some View {
         HStack(spacing: 8) {
             CardTitle("Accesos", symbol: "square.grid.2x2")
-            Spacer()
+
             if shortcuts.shortcuts.isEmpty {
-                Text("Tocá + para sumar apps")
+                Spacer()
+                Text("Tocá + o arrastrá una app")
                     .font(.system(size: 9))
                     .foregroundStyle(.white.opacity(0.3))
+                Spacer()
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(shortcuts.shortcuts) { shortcut in
+                            ShortcutItemButton(
+                                shortcut: shortcut,
+                                icon: shortcuts.icon(for: shortcut),
+                                isEditing: isEditing,
+                                onLaunch: { shortcuts.launch(shortcut) },
+                                onRemove: {
+                                    withAnimation(Motion.standard) {
+                                        shortcuts.remove(shortcut)
+                                        if shortcuts.shortcuts.isEmpty {
+                                            isEditing = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 2)
+                }
             }
-            ForEach(shortcuts.shortcuts.suffix(7)) { shortcut in
+
+            if !shortcuts.shortcuts.isEmpty {
                 Button {
-                    shortcuts.launch(shortcut)
+                    withAnimation(Motion.quick) {
+                        isEditing.toggle()
+                    }
                 } label: {
-                    Image(nsImage: shortcuts.icon(for: shortcut))
-                        .resizable()
-                        .frame(width: 26, height: 26)
+                    Image(systemName: isEditing ? "checkmark" : "minus.circle")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(isEditing ? prefs.accentColor : .white.opacity(0.55))
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle().fill(isEditing ? prefs.accentColor.opacity(0.18) : Color.white.opacity(0.08))
+                        )
+                        .contentShape(Circle())
                 }
                 .buttonStyle(IslandButtonStyle())
-                .help(shortcut.name)
-                .accessibilityLabel("Abrir \(shortcut.name)")
-                .contextMenu {
-                    Button("Quitar") { shortcuts.remove(shortcut) }
-                }
+                .help(isEditing ? "Terminar edición" : "Quitar accesos")
             }
+
             Button {
                 shortcuts.addViaOpenPanel()
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.white.opacity(0.7))
                     .frame(width: 22, height: 22)
                     .background(Circle().fill(Color.white.opacity(0.08)))
+                    .contentShape(Circle())
             }
             .buttonStyle(IslandButtonStyle())
             .help("Agregar aplicación")
             .accessibilityLabel("Agregar aplicación")
         }
         .padding(.horizontal, 10)
-        .frame(height: 44)
+        .frame(height: 46)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(isDropTargeted ? prefs.accentColor.opacity(0.14) : Color.white.opacity(0.06))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    isDropTargeted ? prefs.accentColor.opacity(0.6) : Color.clear,
+                    lineWidth: 1
+                )
+        )
+        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+            DropUtilities.loadFileURLs(from: providers) { urls in
+                for url in urls where url.pathExtension.lowercased() == "app" {
+                    shortcuts.add(url: url)
+                }
+            }
+            return true
+        }
+    }
+}
+
+private struct ShortcutItemButton: View {
+    let shortcut: AppShortcut
+    let icon: NSImage
+    let isEditing: Bool
+    let onLaunch: () -> Void
+    let onRemove: () -> Void
+    @State private var hovering = false
+
+    private var showRemoveBadge: Bool {
+        isEditing || hovering
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button {
+                if isEditing {
+                    onRemove()
+                } else {
+                    onLaunch()
+                }
+            } label: {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 26, height: 26)
+                    .opacity(isEditing ? 0.78 : 1.0)
+            }
+            .buttonStyle(IslandButtonStyle())
+            .help(isEditing ? "Click para quitar \(shortcut.name)" : shortcut.name)
+            .accessibilityLabel("Abrir \(shortcut.name)")
+
+            if showRemoveBadge {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .red)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: 5, y: -4)
+                .help("Quitar \(shortcut.name)")
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .frame(width: 30, height: 30)
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Abrir") { onLaunch() }
+            Divider()
+            Button("Quitar", role: .destructive) { onRemove() }
+        }
     }
 }
 
