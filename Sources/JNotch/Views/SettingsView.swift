@@ -30,7 +30,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Ventana completa de Ajustes con estética oscura coherente con JNotch.
+/// Ventana completa de Ajustes con barra lateral propia y controles sin superposiciones.
 struct SettingsView: View {
     @EnvironmentObject private var prefs: Preferences
     @State private var section: SettingsSection = .general
@@ -39,9 +39,9 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             sidebar
             Divider().overlay(Color.white.opacity(0.08))
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 8) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 9) {
                         Image(systemName: section.symbol)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(prefs.accentColor)
@@ -53,19 +53,18 @@ struct SettingsView: View {
 
                     sectionContent
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 28)
-                .padding(.bottom, 24)
+                .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(hex: "#121216"))
         }
-        .frame(width: 680, height: 500)
+        .frame(width: 720, height: 520)
         .preferredColorScheme(.dark)
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 MiniIslandGlyph(tint: prefs.accentColor)
                     .frame(width: 36, height: 25)
@@ -79,40 +78,43 @@ struct SettingsView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.top, 38)
-            .padding(.bottom, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
 
             ForEach(SettingsSection.allCases) { item in
-                Button {
-                    withAnimation(Motion.quick) {
-                        section = item
-                    }
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 12, weight: .semibold))
-                            .frame(width: 18)
-                            .foregroundStyle(section == item ? prefs.accentColor : .white.opacity(0.5))
-                        Text(item.title)
-                            .font(.callout.weight(section == item ? .semibold : .regular))
-                            .foregroundStyle(section == item ? .white : .white.opacity(0.75))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(section == item ? Color.white.opacity(0.1) : .clear)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                SidebarMenuButton(
+                    title: item.title,
+                    symbol: item.symbol,
+                    isSelected: section == item,
+                    accent: prefs.accentColor
+                ) {
+                    section = item
                 }
-                .buttonStyle(.plain)
             }
+
             Spacer()
+
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "power")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Salir de JNotch")
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                }
+                .foregroundStyle(.red.opacity(0.85))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 14)
-        .frame(width: 195)
+        .frame(width: 200)
+        .frame(maxHeight: .infinity)
         .background(Color(hex: "#191920"))
     }
 
@@ -128,6 +130,44 @@ struct SettingsView: View {
     }
 }
 
+private struct SidebarMenuButton: View {
+    let title: String
+    let symbol: String
+    let isSelected: Bool
+    let accent: Color
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 20)
+                    .foregroundStyle(isSelected ? accent : .white.opacity(0.55))
+                Text(title)
+                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? .white : .white.opacity(0.78))
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? Color.white.opacity(0.12)
+                            : (hovering ? Color.white.opacity(0.06) : Color.clear)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
 // MARK: - Section: General
 
 private struct GeneralSettings: View {
@@ -136,84 +176,81 @@ private struct GeneralSettings: View {
     @State private var loginError: String?
 
     var body: some View {
-        SettingsCard("Inicio del Sistema") {
-            SettingsToggleRow(
-                title: "Iniciar JNotch al abrir sesión",
-                subtitle: "Arranca automáticamente en segundo plano al prender la Mac.",
-                isOn: $launchAtLogin
-            )
-            .onChange(of: launchAtLogin) { enabled in
-                do {
-                    if enabled {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsCard("Inicio del Sistema") {
+                SettingsToggleRow(
+                    title: "Iniciar JNotch al abrir sesión",
+                    subtitle: "Arranca automáticamente en segundo plano al encender la Mac.",
+                    isOn: $launchAtLogin
+                )
+                .onChange(of: launchAtLogin) { enabled in
+                    do {
+                        if enabled {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
+                        }
+                        loginError = nil
+                    } catch {
+                        loginError = error.localizedDescription
+                        launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
-                    loginError = nil
-                } catch {
-                    loginError = error.localizedDescription
-                    launchAtLogin = SMAppService.mainApp.status == .enabled
+                }
+                if let loginError {
+                    Text(loginError)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
                 }
             }
-            if let loginError {
-                Text(loginError)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-            }
-        }
 
-        SettingsCard("Apertura y Cierre") {
-            SettingsControlRow("Modo de apertura") {
-                Picker("", selection: $prefs.hoverToExpand) {
-                    Text("Pasar cursor").tag(true)
-                    Text("Click").tag(false)
+            SettingsCard("Apertura y Cierre") {
+                SettingsControlRow("Modo de apertura") {
+                    SegmentedPills(
+                        options: [(true, "Pasar cursor"), (false, "Hacer click")],
+                        selection: $prefs.hoverToExpand,
+                        accent: prefs.accentColor
+                    )
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 200)
-            }
 
-            if prefs.hoverToExpand {
+                if prefs.hoverToExpand {
+                    Divider().overlay(Color.white.opacity(0.06))
+                    LabeledSlider(
+                        label: "Demora al abrir",
+                        value: $prefs.hoverDelay,
+                        range: 0...0.6,
+                        format: "%.1f s"
+                    )
+                }
+
                 Divider().overlay(Color.white.opacity(0.06))
                 LabeledSlider(
-                    label: "Demora al abrir",
-                    value: $prefs.hoverDelay,
-                    range: 0...0.6,
+                    label: "Demora al cerrar",
+                    value: $prefs.collapseDelay,
+                    range: 0.1...1.5,
                     format: "%.1f s"
                 )
+                Text("Tiempo que permanece abierto al sacar el cursor. Con ESC se cierra al instante.")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
             }
 
-            Divider().overlay(Color.white.opacity(0.06))
-            LabeledSlider(
-                label: "Demora al cerrar",
-                value: $prefs.collapseDelay,
-                range: 0.1...1.5,
-                format: "%.1f s"
-            )
-            Text("Tiempo que permanece abierto al sacar el cursor. Con ESC se cierra al instante.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-        }
-
-        SettingsCard("Animación y Respuesta") {
-            SettingsControlRow("Velocidad de animación") {
-                Picker("", selection: $prefs.animationSpeed) {
-                    ForEach(Preferences.AnimationSpeed.allCases) { speed in
-                        Text(speed.title).tag(speed)
-                    }
+            SettingsCard("Animación y Respuesta") {
+                SettingsControlRow("Velocidad de animación") {
+                    SegmentedPills(
+                        options: Preferences.AnimationSpeed.allCases.map { ($0, $0.title) },
+                        selection: $prefs.animationSpeed,
+                        accent: prefs.accentColor
+                    )
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 210)
+
+                Divider().overlay(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Respuesta háptica",
+                    subtitle: "Vibración sutil en el trackpad al expandir o cambiar pestañas.",
+                    isOn: $prefs.hapticsEnabled
+                )
             }
-
-            Divider().overlay(Color.white.opacity(0.06))
-
-            SettingsToggleRow(
-                title: "Respuesta háptica",
-                subtitle: "Vibración sutil en el trackpad al expandir o cambiar pestañas.",
-                isOn: $prefs.hapticsEnabled
-            )
         }
     }
 }
@@ -224,102 +261,95 @@ private struct AppearanceSettings: View {
     @EnvironmentObject private var prefs: Preferences
 
     var body: some View {
-        SettingsCard("Vista Previa (Modo Contraído)") {
-            HStack {
-                Spacer()
-                CollapsedPreview()
-                Spacer()
-            }
-            .padding(.vertical, 4)
-        }
-
-        SettingsCard("Color de Acento") {
-            AccentSwatchRow(swatchSize: 24, showsRing: true, includeCustomPicker: true)
-            Text("Se aplica en pestañas activas, ecualizador, barras de progreso y zonas de arrastre.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-        }
-
-        SettingsCard("Tamaño del Panel") {
-            SettingsControlRow("Preset") {
-                Picker("", selection: $prefs.islandSizeMode) {
-                    ForEach(Preferences.IslandSizeMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsCard("Vista Previa (Modo Contraído)") {
+                HStack {
+                    Spacer()
+                    CollapsedPreview()
+                    Spacer()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 270)
+                .padding(.vertical, 4)
             }
 
-            if prefs.islandSizeMode == .custom {
+            SettingsCard("Color de Acento") {
+                AccentSwatchRow(swatchSize: 24, showsRing: true, includeCustomPicker: true)
+                Text("Se aplica en pestañas activas, ecualizador, barras de progreso y zonas de arrastre.")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+
+            SettingsCard("Tamaño del Panel") {
+                SettingsControlRow("Preset") {
+                    SegmentedPills(
+                        options: Preferences.IslandSizeMode.allCases.map { ($0, $0.title) },
+                        selection: $prefs.islandSizeMode,
+                        accent: prefs.accentColor
+                    )
+                }
+
+                if prefs.islandSizeMode == .custom {
+                    Divider().overlay(Color.white.opacity(0.06))
+                    LabeledSlider(
+                        label: "Ancho",
+                        value: $prefs.customPanelWidth,
+                        range: Preferences.panelWidthRange,
+                        format: "%.0f pt",
+                        valueWidth: 52
+                    )
+                    LabeledSlider(
+                        label: "Alto",
+                        value: $prefs.customPanelHeight,
+                        range: Preferences.panelHeightRange,
+                        format: "%.0f pt",
+                        valueWidth: 52
+                    )
+                }
+
                 Divider().overlay(Color.white.opacity(0.06))
                 LabeledSlider(
-                    label: "Ancho",
-                    value: $prefs.customPanelWidth,
-                    range: Preferences.panelWidthRange,
-                    format: "%.0f pt",
-                    valueWidth: 52
-                )
-                LabeledSlider(
-                    label: "Alto",
-                    value: $prefs.customPanelHeight,
-                    range: Preferences.panelHeightRange,
+                    label: "Redondeo inferior",
+                    value: $prefs.expandedCornerRadius,
+                    range: Preferences.cornerRadiusRange,
                     format: "%.0f pt",
                     valueWidth: 52
                 )
             }
 
-            Divider().overlay(Color.white.opacity(0.06))
-            LabeledSlider(
-                label: "Redondeo inferior",
-                value: $prefs.expandedCornerRadius,
-                range: Preferences.cornerRadiusRange,
-                format: "%.0f pt",
-                valueWidth: 52
-            )
-        }
-
-        SettingsCard("Indicadores al Lado del Notch") {
-            SettingsControlRow("Lado izquierdo") {
-                Picker("", selection: $prefs.collapsedLeft) {
-                    ForEach(Preferences.CollapsedLeftContent.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
+            SettingsCard("Indicadores al Lado del Notch") {
+                SettingsControlRow("Lado izquierdo") {
+                    SegmentedPills(
+                        options: Preferences.CollapsedLeftContent.allCases.map { ($0, $0.title) },
+                        selection: $prefs.collapsedLeft,
+                        accent: prefs.accentColor
+                    )
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 210)
+
+                Divider().overlay(Color.white.opacity(0.06))
+
+                SettingsControlRow("Lado derecho") {
+                    SegmentedPills(
+                        options: Preferences.CollapsedRightContent.allCases.map { ($0, $0.title) },
+                        selection: $prefs.collapsedRight,
+                        accent: prefs.accentColor
+                    )
+                }
+
+                Divider().overlay(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Ecualizador animado",
+                    subtitle: "Muestra barras en movimiento junto a la carátula cuando suena música.",
+                    isOn: $prefs.showEqualizer
+                )
             }
 
-            Divider().overlay(Color.white.opacity(0.06))
-
-            SettingsControlRow("Lado derecho") {
-                Picker("", selection: $prefs.collapsedRight) {
-                    ForEach(Preferences.CollapsedRightContent.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 250)
+            SettingsCard("Monitores Externos") {
+                SettingsToggleRow(
+                    title: "Mostrar en pantallas sin notch físico",
+                    subtitle: "Si lo apagás, JNotch solo aparece en la pantalla integrada de la MacBook.",
+                    isOn: $prefs.showOnNotchlessScreens
+                )
             }
-
-            Divider().overlay(Color.white.opacity(0.06))
-
-            SettingsToggleRow(
-                title: "Ecualizador animado",
-                subtitle: "Muestra barras en movimiento junto a la carátula cuando suena música.",
-                isOn: $prefs.showEqualizer
-            )
-        }
-
-        SettingsCard("Monitores Externos") {
-            SettingsToggleRow(
-                title: "Mostrar en pantallas sin notch físico",
-                subtitle: "Si lo apagás, JNotch solo aparece en la pantalla integrada de la MacBook.",
-                isOn: $prefs.showOnNotchlessScreens
-            )
         }
     }
 }
@@ -330,44 +360,46 @@ private struct ModuleSettings: View {
     @EnvironmentObject private var prefs: Preferences
 
     var body: some View {
-        SettingsCard("Pestañas Activas") {
-            Text("Encendé solo los módulos que uses para mantener la barra bien limpia.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.bottom, 2)
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsCard("Pestañas Activas") {
+                Text("Encendé solo los módulos que uses para mantener la barra bien limpia.")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
+                    .padding(.bottom, 2)
 
-            ForEach(Array(IslandTab.allCases.enumerated()), id: \.element.id) { index, tab in
-                if index > 0 {
-                    Divider().overlay(Color.white.opacity(0.06))
-                }
-                HStack(spacing: 10) {
-                    Image(systemName: tab.symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 22)
-                        .foregroundStyle(prefs.isTabEnabled(tab) ? prefs.accentColor : .white.opacity(0.35))
-                    Text(tab.title)
-                        .font(.callout)
-                        .foregroundStyle(.white.opacity(0.9))
-                    Spacer()
-                    if Preferences.lockedTabs.contains(tab.rawValue) {
-                        Text("Fija")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.35))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.white.opacity(0.06)))
-                    } else {
-                        Toggle("", isOn: Binding(
-                            get: { prefs.isTabEnabled(tab) },
-                            set: { prefs.setTab(tab, enabled: $0) }
-                        ))
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                        .tint(prefs.accentColor)
+                ForEach(Array(IslandTab.allCases.enumerated()), id: \.element.id) { index, tab in
+                    if index > 0 {
+                        Divider().overlay(Color.white.opacity(0.06))
                     }
+                    HStack(spacing: 10) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 22)
+                            .foregroundStyle(prefs.isTabEnabled(tab) ? prefs.accentColor : .white.opacity(0.35))
+                        Text(tab.title)
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.9))
+                        Spacer()
+                        if Preferences.lockedTabs.contains(tab.rawValue) {
+                            Text("Fija")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.4))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.white.opacity(0.06)))
+                        } else {
+                            Toggle("", isOn: Binding(
+                                get: { prefs.isTabEnabled(tab) },
+                                set: { prefs.setTab(tab, enabled: $0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                            .tint(prefs.accentColor)
+                        }
+                    }
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 3)
             }
         }
     }
@@ -383,64 +415,63 @@ private struct DataSettings: View {
     @State private var confirmClearShelf = false
 
     var body: some View {
-        SettingsCard("Historial del Portapapeles") {
-            SettingsControlRow("Máximo de elementos") {
-                Picker("", selection: $prefs.clipboardLimit) {
-                    ForEach(Preferences.clipboardLimitOptions, id: \.self) { count in
-                        Text("\(count)").tag(count)
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsCard("Historial del Portapapeles") {
+                SettingsControlRow("Máximo de elementos") {
+                    SegmentedPills(
+                        options: Preferences.clipboardLimitOptions.map { ($0, "\($0)") },
+                        selection: $prefs.clipboardLimit,
+                        accent: prefs.accentColor
+                    )
+                }
+
+                Text("Todo queda guardado localmente en tu Mac. El contenido sensible de gestores de contraseñas se ignora.")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
+
+                HStack {
+                    Spacer()
+                    Button("Vaciar portapapeles (\(clipboard.items.count))") {
+                        confirmClearClipboard = true
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(clipboard.items.isEmpty)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 170)
-            }
-
-            Text("Todo queda guardado localmente en tu Mac. El contenido sensible de gestores de contraseñas se ignora.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-
-            HStack {
-                Spacer()
-                Button("Vaciar portapapeles (\(clipboard.items.count))") {
-                    confirmClearClipboard = true
+                .confirmationDialog(
+                    "¿Eliminar los \(clipboard.items.count) elementos del portapapeles?",
+                    isPresented: $confirmClearClipboard
+                ) {
+                    Button("Limpiar", role: .destructive) { clipboard.clearAll() }
+                } message: {
+                    Text("Esta acción no se puede deshacer.")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(clipboard.items.isEmpty)
             }
-            .confirmationDialog(
-                "¿Eliminar los \(clipboard.items.count) elementos del portapapeles?",
-                isPresented: $confirmClearClipboard
-            ) {
-                Button("Limpiar", role: .destructive) { clipboard.clearAll() }
-            } message: {
-                Text("Esta acción no se puede deshacer.")
-            }
-        }
 
-        SettingsCard("Bandeja de Archivos") {
-            SettingsToggleRow(
-                title: "Vaciar bandeja al salir de JNotch",
-                subtitle: "Borra automáticamente los archivos temporales al cerrar la app.",
-                isOn: $prefs.clearShelfOnQuit
-            )
+            SettingsCard("Bandeja de Archivos") {
+                SettingsToggleRow(
+                    title: "Vaciar bandeja al salir de JNotch",
+                    subtitle: "Borra automáticamente los archivos temporales al cerrar la app.",
+                    isOn: $prefs.clearShelfOnQuit
+                )
 
-            HStack {
-                Spacer()
-                Button("Vaciar bandeja ahora (\(shelf.items.count))") {
-                    confirmClearShelf = true
+                HStack {
+                    Spacer()
+                    Button("Vaciar bandeja ahora (\(shelf.items.count))") {
+                        confirmClearShelf = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(shelf.items.isEmpty)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(shelf.items.isEmpty)
-            }
-            .confirmationDialog(
-                "¿Vaciar los \(shelf.items.count) archivos de la bandeja?",
-                isPresented: $confirmClearShelf
-            ) {
-                Button("Vaciar", role: .destructive) { shelf.removeAll() }
-            } message: {
-                Text("Se eliminan las copias guardadas en la bandeja.")
+                .confirmationDialog(
+                    "¿Vaciar los \(shelf.items.count) archivos de la bandeja?",
+                    isPresented: $confirmClearShelf
+                ) {
+                    Button("Vaciar", role: .destructive) { shelf.removeAll() }
+                } message: {
+                    Text("Se eliminan las copias guardadas en la bandeja.")
+                }
             }
         }
     }
@@ -452,41 +483,78 @@ private struct AboutSettings: View {
     @EnvironmentObject private var prefs: Preferences
 
     var body: some View {
-        SettingsCard("JNotch") {
-            HStack(spacing: 12) {
-                MiniIslandGlyph(tint: prefs.accentColor)
-                    .frame(width: 48, height: 34)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("JNotch v\(AppInfo.version)")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text("Centro de control nativo y modular en el notch")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.5))
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsCard("JNotch") {
+                HStack(spacing: 12) {
+                    MiniIslandGlyph(tint: prefs.accentColor)
+                        .frame(width: 48, height: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("JNotch v\(AppInfo.version)")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text("Centro de control nativo y modular en el notch")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
                 }
+                Text("Construido 100% en Swift + SwiftUI para macOS, diseñado para ser liviano, rápido y personalizable.")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
             }
-            Text("Construido 100% en Swift + SwiftUI para macOS, diseñado para ser liviano, rápido y personalizable.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.45))
-        }
 
-        SettingsCard("Repositorio") {
-            Link(destination: URL(string: "https://github.com/joacodelfino/j-notch")!) {
-                HStack {
-                    Label("github.com/joacodelfino/j-notch", systemImage: "link")
-                        .font(.caption)
-                        .foregroundStyle(prefs.accentColor)
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.4))
+            SettingsCard("Repositorio") {
+                Link(destination: URL(string: "https://github.com/joacodelfino/j-notch")!) {
+                    HStack {
+                        Label("github.com/joacodelfino/j-notch", systemImage: "link")
+                            .font(.caption)
+                            .foregroundStyle(prefs.accentColor)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
                 }
             }
         }
     }
 }
 
-// MARK: - Shared Building Blocks
+// MARK: - Custom Non-Overlapping Segmented Pills & Shared Components
+
+private struct SegmentedPills<Value: Hashable>: View {
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+    var accent: Color
+    var compact: Bool = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                let active = selection == option.value
+                Button {
+                    withAnimation(Motion.quick) {
+                        selection = option.value
+                    }
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: compact ? 10 : 11, weight: active ? .semibold : .medium))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .foregroundStyle(active ? Color.black : Color.white.opacity(0.75))
+                        .padding(.horizontal, compact ? 8 : 11)
+                        .padding(.vertical, compact ? 3.5 : 5)
+                        .background(
+                            Capsule().fill(active ? accent : Color.clear)
+                        )
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(Color.white.opacity(0.07)))
+    }
+}
 
 private struct SettingsCard<Content: View>: View {
     let title: String
@@ -498,14 +566,14 @@ private struct SettingsCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 11) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(.white.opacity(0.42))
                 .kerning(0.6)
             content
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -528,11 +596,12 @@ private struct SettingsControlRow<Control: View>: View {
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Text(label)
                 .font(.callout)
                 .foregroundStyle(.white.opacity(0.9))
-            Spacer()
+                .lineLimit(1)
+            Spacer(minLength: 12)
             control
         }
     }
@@ -545,7 +614,7 @@ private struct SettingsToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.callout)
@@ -556,7 +625,7 @@ private struct SettingsToggleRow: View {
                         .foregroundStyle(.white.opacity(0.45))
                 }
             }
-            Spacer()
+            Spacer(minLength: 12)
             Toggle("", isOn: $isOn)
                 .toggleStyle(.switch)
                 .controlSize(.small)
@@ -572,19 +641,19 @@ private struct LabeledSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let format: String
-    var valueWidth: CGFloat = 46
+    var valueWidth: CGFloat = 48
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Text(label)
                 .font(.callout)
                 .foregroundStyle(.white.opacity(0.9))
-                .frame(width: 130, alignment: .leading)
+                .frame(width: 135, alignment: .leading)
             Slider(value: $value, in: range)
                 .tint(prefs.accentColor)
             Text(String(format: format, value))
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.white.opacity(0.6))
                 .frame(width: valueWidth, alignment: .trailing)
         }
     }
@@ -597,29 +666,29 @@ struct AccentSwatchRow: View {
     var includeCustomPicker: Bool = true
 
     var body: some View {
-        HStack(spacing: swatchSize > 18 ? 10 : 7) {
+        HStack(spacing: swatchSize > 18 ? 10 : 8) {
             ForEach(Preferences.accentPalette) { option in
+                let selected = prefs.accentHex.uppercased() == option.hex.uppercased()
                 Button {
                     prefs.accentHex = option.hex
                 } label: {
-                    Circle()
-                        .fill(option.color)
-                        .frame(width: swatchSize, height: swatchSize)
-                        .overlay {
-                            if prefs.accentHex.uppercased() == option.hex.uppercased() {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: swatchSize * 0.4, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
+                    ZStack {
+                        if showsRing && selected {
+                            Circle()
+                                .strokeBorder(Color.white.opacity(0.85), lineWidth: 1.5)
+                                .frame(width: swatchSize + 5, height: swatchSize + 5)
                         }
-                        .overlay(
-                            Circle().strokeBorder(
-                                showsRing && prefs.accentHex.uppercased() == option.hex.uppercased()
-                                    ? Color.white.opacity(0.85) : .clear,
-                                lineWidth: 1.5
-                            )
-                            .padding(-3)
-                        )
+                        Circle()
+                            .fill(option.color)
+                            .frame(width: swatchSize, height: swatchSize)
+                        if selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: swatchSize * 0.4, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: swatchSize + 6, height: swatchSize + 6)
+                    .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help(option.name)
@@ -631,7 +700,7 @@ struct AccentSwatchRow: View {
                     set: { prefs.accentHex = $0.hexString }
                 ), supportsOpacity: false)
                 .labelsHidden()
-                .frame(width: swatchSize, height: swatchSize)
+                .frame(width: swatchSize + 6, height: swatchSize + 6)
                 .help("Color personalizado")
             }
             Spacer(minLength: 0)
@@ -741,7 +810,7 @@ struct MiniIslandGlyph: View {
     }
 }
 
-// MARK: - In-Notch Settings Tab (2-column balanced layout)
+// MARK: - In-Notch Settings Tab (Scrollable & Zero-Overlap)
 
 struct SettingsQuickView: View {
     @EnvironmentObject private var prefs: Preferences
@@ -752,8 +821,8 @@ struct SettingsQuickView: View {
         IslandTab.allCases.filter { !Preferences.lockedTabs.contains($0.rawValue) }
     }
 
-    private var sizePresets: [Preferences.IslandSizeMode] {
-        [.compact, .normal, .large]
+    private var sizePresets: [(Preferences.IslandSizeMode, String)] {
+        [(.compact, "Chico"), (.normal, "Normal"), (.large, "Grande")]
     }
 
     var body: some View {
@@ -765,49 +834,50 @@ struct SettingsQuickView: View {
     }
 
     private var leftColumn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CardTitle("Apariencia y Comportamiento", symbol: "slider.horizontal.3", tint: prefs.accentColor)
+        VStack(alignment: .leading, spacing: 8) {
+            CardTitle("Apariencia", symbol: "slider.horizontal.3", tint: prefs.accentColor)
 
-            // Apertura
-            quickSegmentRow(title: "Abrir") {
-                quickPill("Hover", active: prefs.hoverToExpand) { prefs.hoverToExpand = true }
-                quickPill("Click", active: !prefs.hoverToExpand) { prefs.hoverToExpand = false }
-            }
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 9) {
+                    quickRow("Abrir") {
+                        SegmentedPills(
+                            options: [(true, "Hover"), (false, "Click")],
+                            selection: $prefs.hoverToExpand,
+                            accent: prefs.accentColor,
+                            compact: true
+                        )
+                    }
 
-            // Tamaño
-            quickSegmentRow(title: "Tamaño") {
-                ForEach(sizePresets) { mode in
-                    quickPill(mode.title, active: prefs.islandSizeMode == mode) {
-                        prefs.islandSizeMode = mode
+                    quickRow("Tamaño") {
+                        SegmentedPills(
+                            options: sizePresets,
+                            selection: $prefs.islandSizeMode,
+                            accent: prefs.accentColor,
+                            compact: true
+                        )
+                    }
+
+                    quickRow("Ritmo") {
+                        SegmentedPills(
+                            options: Preferences.AnimationSpeed.allCases.map { ($0, $0.title) },
+                            selection: $prefs.animationSpeed,
+                            accent: prefs.accentColor,
+                            compact: true
+                        )
+                    }
+
+                    quickRow("Acento") {
+                        AccentSwatchRow(swatchSize: 16, showsRing: true, includeCustomPicker: false)
                     }
                 }
+                .padding(.top, 2)
             }
-
-            // Velocidad
-            quickSegmentRow(title: "Ritmo") {
-                ForEach(Preferences.AnimationSpeed.allCases) { speed in
-                    quickPill(speed.title, active: prefs.animationSpeed == speed) {
-                        prefs.animationSpeed = speed
-                    }
-                }
-            }
-
-            // Color de acento (sin NSColorPanel flotante que robe foco)
-            HStack(spacing: 8) {
-                Text("Acento")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.5))
-                    .frame(width: 48, alignment: .leading)
-                AccentSwatchRow(swatchSize: 17, showsRing: true, includeCustomPicker: false)
-            }
-
-            Spacer(minLength: 0)
 
             Divider().overlay(Color.white.opacity(0.08))
 
             HStack(spacing: 14) {
-                quickToggle("Ecualizador", isOn: $prefs.showEqualizer)
-                quickToggle("Háptico", isOn: $prefs.hapticsEnabled)
+                quickCheckbox("Ecualizador", isOn: $prefs.showEqualizer)
+                quickCheckbox("Háptico", isOn: $prefs.hapticsEnabled)
                 Spacer(minLength: 0)
             }
         }
@@ -817,7 +887,7 @@ struct SettingsQuickView: View {
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                CardTitle("Módulos Visibles", symbol: "square.grid.2x2.fill", tint: prefs.accentColor)
+                CardTitle("Módulos", symbol: "square.grid.2x2.fill", tint: prefs.accentColor)
                 Spacer()
                 ConfirmingButton(title: "Limpiar datos", systemImage: "trash", tint: .white.opacity(0.45)) {
                     clipboard.clearAll()
@@ -825,67 +895,64 @@ struct SettingsQuickView: View {
                 }
             }
 
-            VStack(spacing: 5) {
-                ForEach(toggleableTabs) { tab in
-                    let enabled = prefs.isTabEnabled(tab)
-                    Button {
-                        withAnimation(Motion.standard) {
-                            prefs.setTab(tab, enabled: !enabled)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 5) {
+                    ForEach(toggleableTabs) { tab in
+                        let enabled = prefs.isTabEnabled(tab)
+                        Button {
+                            withAnimation(Motion.standard) {
+                                prefs.setTab(tab, enabled: !enabled)
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: tab.symbol)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .frame(width: 18)
+                                    .foregroundStyle(enabled ? prefs.accentColor : .white.opacity(0.3))
+                                Text(tab.title)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(enabled ? .white.opacity(0.9) : .white.opacity(0.4))
+                                Spacer()
+                                Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(enabled ? prefs.accentColor : .white.opacity(0.22))
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(enabled ? 0.07 : 0.03))
+                            )
+                            .contentShape(Rectangle())
                         }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: tab.symbol)
-                                .font(.system(size: 11, weight: .semibold))
-                                .frame(width: 18)
-                                .foregroundStyle(enabled ? prefs.accentColor : .white.opacity(0.3))
-                            Text(tab.title)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(enabled ? .white.opacity(0.9) : .white.opacity(0.4))
-                            Spacer()
-                            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 12))
-                                .foregroundStyle(enabled ? prefs.accentColor : .white.opacity(0.2))
-                        }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(enabled ? 0.07 : 0.03))
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.top, 2)
             }
-
-            Spacer(minLength: 0)
 
             Divider().overlay(Color.white.opacity(0.08))
 
-            HStack {
+            HStack(spacing: 8) {
                 Button {
                     JNotchApp.delegate?.openSettings()
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "macwindow")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("Más ajustes…")
+                        Text("Todos los ajustes…")
                             .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
                     }
                     .foregroundStyle(prefs.accentColor)
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(prefs.accentColor.opacity(0.14)))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(IslandButtonStyle())
 
-                Spacer()
-
-                Text("v\(AppInfo.version)")
-                    .font(.system(size: 9).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.28))
-
-                Spacer()
+                Spacer(minLength: 4)
 
                 Button {
                     NSApp.terminate(nil)
@@ -897,9 +964,10 @@ struct SettingsQuickView: View {
                             .font(.caption2.weight(.semibold))
                     }
                     .foregroundStyle(.red.opacity(0.85))
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(Color.red.opacity(0.12)))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(IslandButtonStyle())
             }
@@ -907,40 +975,18 @@ struct SettingsQuickView: View {
         .islandCard()
     }
 
-    private func quickSegmentRow<Buttons: View>(
-        title: String,
-        @ViewBuilder buttons: () -> Buttons
-    ) -> some View {
+    private func quickRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 8) {
-            Text(title)
+            Text(label)
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.5))
-                .frame(width: 48, alignment: .leading)
-            HStack(spacing: 4) {
-                buttons()
-            }
-            .padding(2)
-            .background(Capsule().fill(Color.white.opacity(0.06)))
+                .frame(width: 46, alignment: .leading)
+            content()
             Spacer(minLength: 0)
         }
     }
 
-    private func quickPill(_ label: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 10, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? .black : .white.opacity(0.65))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 3.5)
-                .background(
-                    Capsule().fill(active ? prefs.accentColor : Color.clear)
-                )
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func quickToggle(_ label: String, isOn: Binding<Bool>) -> some View {
+    private func quickCheckbox(_ label: String, isOn: Binding<Bool>) -> some View {
         Button {
             isOn.wrappedValue.toggle()
         } label: {
@@ -950,7 +996,7 @@ struct SettingsQuickView: View {
                     .foregroundStyle(isOn.wrappedValue ? prefs.accentColor : .white.opacity(0.35))
                 Text(label)
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(.white.opacity(0.8))
             }
             .contentShape(Rectangle())
         }

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Borderless, transparent, always-on-top panel anchored to the top-center.
@@ -48,9 +49,12 @@ final class NotchHostingView: NSHostingView<AnyView> {
     /// Adanın pencere (content) koordinatındaki dikdörtgenini veren closure.
     var islandRect: (() -> CGRect)?
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let rect = islandRect?() else { return super.hitTest(point) }
-        // point superview koordinatında gelir; ada dikdörtgeni self koordinatında.
         let local = convert(point, from: superview)
         return rect.contains(local) ? super.hitTest(point) : nil
     }
@@ -64,6 +68,7 @@ final class NotchWindowController {
     private var expandWork: DispatchWorkItem?
     /// Hover durumu — yalnızca değişimde aksiyon alınır (mouseMoved seli filtrelenir).
     private var hoverInside = false
+    private var cancellables: Set<AnyCancellable> = []
     // İki bağımsız hover kaynağı (kuşak + askı), ikisi de updateHover'a besler:
     private nonisolated(unsafe) var globalMonitor: Any?
     private nonisolated(unsafe) var localMonitor: Any?
@@ -92,13 +97,13 @@ final class NotchWindowController {
         // (gerçek fareyle kanıtlandı); izin gerektirmez.
         // Panel gizliyken (orderOut) frame bayat/zero kalır — hoverRect o durumda
         // ekranda "hayalet" bir bölge üretir; görünürlük şartı bunu keser.
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.panel.isVisible else { return }
                 self.updateHover(inside: self.hoverRect().contains(NSEvent.mouseLocation))
             }
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
             if let self {
                 MainActor.assumeIsolated {
                     guard self.panel.isVisible else { return }
@@ -125,6 +130,19 @@ final class NotchWindowController {
         ) { [weak self] _ in
             Task { @MainActor in self?.applyFrame() }
         }
+
+        viewModel.$isExpanded
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, self.panel.isVisible else { return }
+                let inside = self.hoverRect().contains(NSEvent.mouseLocation)
+                self.panel.ignoresMouseEvents = !inside
+                if !inside {
+                    self.hoverInside = false
+                    self.viewModel.isMouseInside = false
+                }
+            }
+            .store(in: &cancellables)
     }
 
     deinit {
@@ -157,6 +175,9 @@ final class NotchWindowController {
     /// Tek giriş noktası; her iki kaynak da buraya besler. Sadece durum
     /// değişiminde aksiyon alır — mouseMoved seli aç/kapa döngüsü yaratmaz.
     private func updateHover(inside: Bool) {
+        if panel.ignoresMouseEvents != !inside {
+            panel.ignoresMouseEvents = !inside
+        }
         guard inside != hoverInside else { return }
         hoverInside = inside
         viewModel.isMouseInside = inside
@@ -190,13 +211,13 @@ final class NotchWindowController {
         let expanded = viewModel.expandedSize
         let width = max(expanded.width, viewModel.collapsedPillSize.width) + 60
         let height = expanded.height + 40
-        // Fiziksel çentik ekran merkezinden yarım nokta kayık raporlanabilir
-        // (auxiliary alanlar asimetrik); pencereyi çentiğe hizala.
         var frame = screen.topAnchoredRect(width: width, height: height)
         frame.origin.x = frame.origin.x.rounded()
         if panel.frame != frame {
             panel.setFrame(frame, display: true)
         }
+        let pointerInside = hoverRect().contains(NSEvent.mouseLocation)
+        panel.ignoresMouseEvents = !pointerInside
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
