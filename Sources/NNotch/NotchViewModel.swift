@@ -40,6 +40,9 @@ final class NotchViewModel: ObservableObject {
     /// (ej. miniatura de YouTube) mientras la silueta negra se contrae con su animación suave.
     @Published var isContentVisible = false
     @Published var activeTab: IslandTab = .home
+    @Published private(set) var calendarAlerts: [CalendarEventItem] = []
+    private var alertDismissWork: DispatchWorkItem?
+    private var expandedForAlert = false
     @Published var isDragHovering = false
     @Published var collapsedSize = CGSize(width: 196, height: 32)
 
@@ -57,6 +60,26 @@ final class NotchViewModel: ObservableObject {
     }
 
     private var collapseWorkItem: DispatchWorkItem?
+
+    func showCalendarAlerts(_ events: [CalendarEventItem]) {
+        guard !events.isEmpty else { return }
+        if calendarAlerts.isEmpty { expandedForAlert = !isExpanded }
+        calendarAlerts.append(contentsOf: events.filter { event in !calendarAlerts.contains(where: { $0.id == event.id }) })
+        expand()
+        alertDismissWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.dismissCalendarAlerts() }
+        alertDismissWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
+    }
+
+    func dismissCalendarAlerts(keepOpen: Bool = false) {
+        alertDismissWork?.cancel()
+        alertDismissWork = nil
+        calendarAlerts = []
+        let shouldCollapse = expandedForAlert && !keepOpen
+        expandedForAlert = false
+        if shouldCollapse { collapse() }
+    }
 
     func refreshGeometry() {
         if let screen = ScreenGeometry.targetScreen {
@@ -88,7 +111,7 @@ final class NotchViewModel: ObservableObject {
         collapseWorkItem?.cancel()
         guard isExpanded else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.isMouseInside, !self.isDragHovering else { return }
+            guard let self, !self.isMouseInside, !self.isDragHovering, self.calendarAlerts.isEmpty else { return }
             self.performSmoothCollapse()
         }
         if delay <= 0 {
@@ -101,6 +124,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     func collapseNow() {
+        dismissCalendarAlerts(keepOpen: true)
         collapseWorkItem?.cancel()
         isMouseInside = false
         isDragHovering = false

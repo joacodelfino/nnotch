@@ -12,7 +12,13 @@ struct ExpandedView: View {
             header
                 .frame(height: max(vm.collapsedSize.height - 4, 24))
             TabStrip()
-            content
+            Group {
+                if vm.calendarAlerts.isEmpty {
+                    content
+                } else {
+                    CalendarAlertView()
+                }
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(vm.activeTab)
                 .transition(.opacity)
@@ -91,6 +97,7 @@ struct TabStrip: View {
         HStack(spacing: 4) {
             ForEach(prefs.visibleTabs) { tab in
                 Button {
+                    vm.dismissCalendarAlerts(keepOpen: true)
                     vm.activeTab = tab
                     prefs.performHaptic(.generic)
                 } label: {

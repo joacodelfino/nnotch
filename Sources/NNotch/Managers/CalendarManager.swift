@@ -2,63 +2,6 @@ import AppKit
 import Combine
 import EventKit
 import SwiftUI
-import os
-
-enum CalendarProvider: String, CaseIterable, Identifiable, Codable {
-    case all = "all"
-    case mac = "mac"
-    case google = "google"
-    case custom = "custom"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: return "Todos"
-        case .mac: return "Mac"
-        case .google: return "Google"
-        case .custom: return "Otro (.ics)"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .all: return "tray.2.fill"
-        case .mac: return "apple.logo"
-        case .google: return "globe"
-        case .custom: return "link"
-        }
-    }
-}
-
-struct ExternalCalendarFeed: Identifiable, Codable, Equatable {
-    let id: UUID
-    var name: String
-    var urlString: String
-    var provider: CalendarProvider // .google or .custom
-    var colorHex: String
-    var isEnabled: Bool = true
-}
-
-struct CalendarEventItem: Identifiable, Codable, Equatable {
-    let id: String
-    let title: String
-    let startDate: Date
-    let endDate: Date
-    let isAllDay: Bool
-    let colorHex: String
-    let sourceLabel: String
-    let provider: CalendarProvider
-    let meetingURL: URL?
-}
-
-struct MacCalendarSourceInfo: Identifiable, Equatable {
-    let id: String
-    let title: String
-    let accountName: String
-    let colorHex: String
-    let isGoogleAccount: Bool
-}
 
 /// Gestor multi-calendario: soporta Calendario de Mac (EventKit), Google Calendar
 /// (cuentas Google sincronizadas en macOS + feeds iCal .ics directos) y otros calendarios (.ics / Outlook / Notion).
@@ -69,10 +12,8 @@ final class CalendarManager: ObservableObject {
     }
 
     @Published private(set) var eventAccess: Access = .unknown
-    @Published private(set) var reminderAccess: Access = .unknown
     @Published private(set) var macCalendars: [MacCalendarSourceInfo] = []
     @Published private(set) var allEvents: [CalendarEventItem] = []
-    @Published private(set) var openReminders: [EKReminder] = []
     @Published private(set) var isSyncingExternal = false
     @Published private(set) var externalError: String?
     var hasGoogleAccountOnMac: Bool { macCalendars.contains(where: \.isGoogleAccount) }
@@ -98,10 +39,52 @@ final class CalendarManager: ObservableObject {
         }
     }
 
+    @Published private(set) var displayedMonth = CalendarLayout.monthStart(Date())
+    @Published var selectedDate = CalendarLayout.calendar.startOfDay(for: Date())
+    @Published var alertsEnabled = UserDefaults.standard.object(forKey: "calendar.alertsEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(alertsEnabled, forKey: "calendar.alertsEnabled") }
+    }
+    var onEventsStarting: (([CalendarEventItem]) -> Void)?
+    private var alertLedger = CalendarAlertLedger(
+        delivered: UserDefaults.standard.dictionary(forKey: "calendar.deliveredAlerts") as? [String: Double] ?? [:]
+    )
+    private var timer: AnyCancellable?
+    private var nextRefresh = Date.distantPast
+    private var externalTask: Task<Void, Never>?
+
+    func showMonth(offset: Int) {
+        guard let month = CalendarLayout.calendar.date(byAdding: .month, value: offset, to: displayedMonth) else { return }
+        selectDay(month)
+    }
+
+    func selectDay(_ date: Date) {
+        selectedDate = date
+        let month = CalendarLayout.monthStart(date)
+        if month != displayedMonth {
+            displayedMonth = month
+            refresh()
+        }
+    }
+
+    func showToday() { selectDay(CalendarLayout.calendar.startOfDay(for: Date())) }
+
+    private var eventIntervals: [DateInterval] {
+        let today = CalendarLayout.calendar.startOfDay(for: Date())
+        let tomorrow = CalendarLayout.calendar.date(byAdding: .day, value: 2, to: today)!
+        return [CalendarLayout.interval(for: displayedMonth), DateInterval(start: today, end: tomorrow)]
+    }
+
+    private func checkEventAlerts() {
+        guard alertsEnabled, Preferences.shared.isTabEnabled(.calendar), onEventsStarting != nil else { return }
+        let due = alertLedger.takeDue(events: allEvents, now: Date())
+        guard !due.isEmpty else { return }
+        UserDefaults.standard.set(alertLedger.delivered, forKey: "calendar.deliveredAlerts")
+        onEventsStarting?(due)
+    }
+
     private var cachedExternalEvents: [CalendarEventItem] = []
     private let store = EKEventStore()
     private var loading = true
-    private let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Calendar")
 
     init() {
         let savedProvider = UserDefaults.standard.string(forKey: "calendar.selectedProvider") ?? ""
@@ -131,7 +114,21 @@ final class CalendarManager: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
         refresh()
+        timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+            .sink { [weak self] now in
+                guard let self else { return }
+                if now >= self.nextRefresh {
+                    self.nextRefresh = now.addingTimeInterval(60)
+                    self.refresh()
+                }
+                self.checkEventAlerts()
+            }
     }
 
     /// Eventos filtrados según el origen elegido en la barra superior de Calendario.
@@ -232,7 +229,6 @@ final class CalendarManager: ObservableObject {
 
     private func updateAccessFromSystem() {
         eventAccess = Self.access(for: .event)
-        reminderAccess = Self.access(for: .reminder)
     }
 
     private static func access(for entity: EKEntityType) -> Access {
@@ -256,16 +252,6 @@ final class CalendarManager: ObservableObject {
         requestEventAccess { [weak self] in self?.refresh() }
     }
 
-    func requestRemindersAccessAndRefresh() {
-        requestReminderAccess { [weak self] in self?.refresh() }
-    }
-
-    func requestAccessAndRefresh() {
-        requestEventAccess { [weak self] in
-            self?.requestReminderAccess { self?.refresh() }
-        }
-    }
-
     private func requestEventAccess(completion: @escaping () -> Void) {
         if #available(macOS 14.0, *) {
             store.requestFullAccessToEvents { [weak self] granted, _ in
@@ -284,45 +270,12 @@ final class CalendarManager: ObservableObject {
         }
     }
 
-    private func requestReminderAccess(completion: @escaping () -> Void) {
-        if #available(macOS 14.0, *) {
-            store.requestFullAccessToReminders { [weak self] granted, _ in
-                Task { @MainActor in
-                    self?.reminderAccess = granted ? .granted : .denied
-                    completion()
-                }
-            }
-        } else {
-            store.requestAccess(to: .reminder) { [weak self] granted, _ in
-                Task { @MainActor in
-                    self?.reminderAccess = granted ? .granted : .denied
-                    completion()
-                }
-            }
-        }
-    }
-
     // MARK: - Refresh & Merge
 
     func refresh() {
         updateAccessFromSystem()
         rebuildMacEvents()
         refreshExternalFeeds()
-        if reminderAccess == .granted {
-            let predicate = store.predicateForReminders(in: nil)
-            store.fetchReminders(matching: predicate) { [weak self] reminders in
-                let open = (reminders ?? [])
-                    .filter { !$0.isCompleted }
-                    .sorted { a, b in
-                        let dateA = a.dueDateComponents?.date ?? .distantFuture
-                        let dateB = b.dueDateComponents?.date ?? .distantFuture
-                        return dateA < dateB
-                    }
-                Task { @MainActor in
-                    self?.openReminders = Array(open.prefix(20))
-                }
-            }
-        }
     }
 
     private var cachedMacEvents: [CalendarEventItem] = []
@@ -359,13 +312,10 @@ final class CalendarManager: ObservableObject {
             return
         }
 
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        let end = calendar.date(byAdding: .day, value: 14, to: start) ?? start
-        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: activeCalendars)
-        let events = store.events(matching: predicate)
-            .filter { !$0.isAllDay || $0.endDate >= start }
-            .sorted { $0.startDate < $1.startDate }
+        let events = eventIntervals.flatMap { interval in
+            let predicate = store.predicateForEvents(withStart: interval.start, end: interval.end, calendars: activeCalendars)
+            return store.events(matching: predicate)
+        }.sorted { $0.startDate < $1.startDate }
 
         cachedMacEvents = events.map { ev in
             let cal = ev.calendar as EKCalendar?
@@ -393,16 +343,19 @@ final class CalendarManager: ObservableObject {
     }
 
     func refreshExternalFeeds() {
+        externalTask?.cancel()
         let activeFeeds = externalFeeds.filter(\.isEnabled)
         guard !activeFeeds.isEmpty else {
             cachedExternalEvents = []
+            isSyncingExternal = false
             mergeAllEvents()
             return
         }
 
         isSyncingExternal = true
         externalError = nil
-        Task {
+        let intervals = eventIntervals
+        externalTask = Task {
             var collected: [CalendarEventItem] = []
             var firstError: String?
             for feed in activeFeeds {
@@ -412,13 +365,14 @@ final class CalendarManager: ObservableObject {
                     req.timeoutInterval = 8
                     let (data, _) = try await URLSession.shared.data(for: req)
                     if let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) {
-                        let parsed = Self.parseICS(text: text, feed: feed)
+                        let parsed = intervals.flatMap { Self.parseICS(text: text, feed: feed, window: $0) }
                         collected.append(contentsOf: parsed)
                     }
                 } catch {
                     firstError = "No se pudo sincronizar \(feed.name)"
                 }
             }
+            guard !Task.isCancelled else { return }
             self.cachedExternalEvents = collected
             self.isSyncingExternal = false
             self.externalError = firstError
@@ -433,23 +387,12 @@ final class CalendarManager: ObservableObject {
             .sorted { $0.startDate < $1.startDate }
 
         for item in all {
-            let dedupKey = "\(item.title.lowercased())|\(Int(item.startDate.timeIntervalSince1970))"
+            let dedupKey = "\(item.id)|\(item.startDate.timeIntervalSince1970)"
             if seenKeys.insert(dedupKey).inserted {
                 deduped.append(item)
             }
         }
-        allEvents = Array(deduped.prefix(50))
-    }
-
-    func complete(_ reminder: EKReminder) {
-        reminder.isCompleted = true
-        do {
-            try store.save(reminder, commit: true)
-            openReminders.removeAll { $0.calendarItemIdentifier == reminder.calendarItemIdentifier }
-        } catch {
-            reminder.isCompleted = false
-            log.error("Recordatorio no completado: \(error.localizedDescription, privacy: .public)")
-        }
+        allEvents = deduped
     }
 
     // MARK: - Meeting Link & ICS Parser
@@ -468,7 +411,7 @@ final class CalendarManager: ObservableObject {
         return nil
     }
 
-    nonisolated static func parseICS(text: String, feed: ExternalCalendarFeed) -> [CalendarEventItem] {
+    nonisolated static func parseICS(text: String, feed: ExternalCalendarFeed, window: DateInterval? = nil) -> [CalendarEventItem] {
         // Desplegar líneas plegadas RFC 5545 (CRLF + espacio/tab)
         let unfolded = text
             .replacingOccurrences(of: "\r\n ", with: "")
@@ -478,8 +421,8 @@ final class CalendarManager: ObservableObject {
 
         let lines = unfolded.components(separatedBy: .newlines)
         let cal = Calendar.current
-        let windowStart = cal.startOfDay(for: Date())
-        let windowEnd = cal.date(byAdding: .day, value: 14, to: windowStart) ?? windowStart
+        let windowStart = window?.start ?? cal.startOfDay(for: Date())
+        let windowEnd = window?.end ?? cal.date(byAdding: .day, value: 14, to: windowStart)!
 
         var results: [CalendarEventItem] = []
         var inEvent = false
@@ -611,7 +554,7 @@ final class CalendarManager: ObservableObject {
             let dayMap: [String: Int] = ["SU": 1, "MO": 2, "TU": 3, "WE": 4, "TH": 5, "FR": 6, "SA": 7]
             if let byDayRaw = params["BYDAY"] {
                 let targetWeekdays = Set(byDayRaw.split(separator: ",").compactMap { dayMap[String($0.suffix(2))] })
-                for offset in 0...14 {
+                for offset in 0...(cal.dateComponents([.day], from: windowStart, to: windowEnd).day ?? 42) {
                     guard let dayDate = cal.date(byAdding: .day, value: offset, to: windowStart) else { continue }
                     let wd = cal.component(.weekday, from: dayDate)
                     if targetWeekdays.contains(wd),

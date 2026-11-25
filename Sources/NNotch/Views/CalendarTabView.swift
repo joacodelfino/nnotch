@@ -1,8 +1,7 @@
 import AppKit
-import EventKit
 import SwiftUI
 
-/// Pestaña de Calendario y Recordatorios con selector de origen:
+/// Calendario mensual con selector de origen:
 /// Todos, Mac (EventKit), Google Calendar y Otros (.ics / Outlook / Notion).
 struct CalendarTabView: View {
     @EnvironmentObject private var calendar: CalendarManager
@@ -20,7 +19,7 @@ struct CalendarTabView: View {
             if showingConfig {
                 configPanel
             } else {
-                mainColumns
+                eventsColumn
             }
         }
         .islandCard()
@@ -65,6 +64,16 @@ struct CalendarTabView: View {
             .background(Capsule().fill(Color.white.opacity(0.07)))
 
             Spacer()
+
+            Button {
+                calendar.alertsEnabled.toggle()
+            } label: {
+                Image(systemName: calendar.alertsEnabled ? "bell.badge.fill" : "bell.slash")
+                    .foregroundStyle(calendar.alertsEnabled ? prefs.accentColor : .white.opacity(0.45))
+            }
+            .buttonStyle(.plain)
+            .help(calendar.alertsEnabled ? "Avisos al comenzar: activados" : "Avisos al comenzar: desactivados")
+            .accessibilityLabel("Avisos de eventos")
 
             if calendar.isSyncingExternal {
                 ProgressView()
@@ -121,21 +130,6 @@ struct CalendarTabView: View {
         }
     }
 
-    // MARK: - Main Events + Reminders Columns
-
-    private var mainColumns: some View {
-        HStack(alignment: .top, spacing: 14) {
-            eventsColumn
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            Divider().overlay(Color.white.opacity(0.08))
-
-            remindersColumn
-                .frame(width: 215)
-                .frame(maxHeight: .infinity, alignment: .topLeading)
-        }
-    }
-
     @ViewBuilder
     private var eventsColumn: some View {
         switch calendar.selectedProvider {
@@ -156,90 +150,7 @@ struct CalendarTabView: View {
         case .all where calendar.eventAccess != .granted && !calendar.hasGoogleAccountOnMac && calendar.externalFeeds.isEmpty:
             macPermissionRequestView
         default:
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    CardTitle("Próximos Eventos · \(calendar.selectedProvider.title)", symbol: "calendar", tint: .red)
-                    Spacer()
-                    if let err = calendar.externalError {
-                        Text(err)
-                            .font(.system(size: 8.5))
-                            .foregroundStyle(.orange)
-                            .lineLimit(3)
-                            .help(err)
-                    }
-                }
-
-                if calendar.filteredEvents.isEmpty {
-                    VStack(spacing: 6) {
-                        Spacer()
-                        Image(systemName: "calendar.badge.checkmark")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.white.opacity(0.2))
-                        Text("No hay eventos próximos en \(calendar.selectedProvider.title)")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.4))
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView(showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(calendar.filteredEvents) { event in
-                                eventRow(event)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var remindersColumn: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            CardTitle("Recordatorios", symbol: "checklist", tint: .orange)
-            if calendar.reminderAccess == .unknown {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Text("Sincronizá tus recordatorios de Mac")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.45))
-                        .multilineTextAlignment(.center)
-                    Button("Dar permiso") {
-                        calendar.requestRemindersAccessAndRefresh()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else if calendar.reminderAccess == .denied {
-                VStack(spacing: 6) {
-                    Spacer()
-                    Text("Acceso a Recordatorios desactivado")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.4))
-                        .multilineTextAlignment(.center)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else if calendar.openReminders.isEmpty {
-                VStack(spacing: 6) {
-                    Spacer()
-                    Text("Sin pendientes 🎉")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.35))
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(calendar.openReminders, id: \.calendarItemIdentifier) { reminder in
-                            reminderRow(reminder)
-                        }
-                    }
-                }
-            }
+            CalendarMonthView()
         }
     }
 
@@ -265,6 +176,24 @@ struct CalendarTabView: View {
                 if calendar.eventAccess != .granted {
                     calendarAccessButton
                 }
+
+                HStack {
+                    Toggle("Avisar al comenzar", isOn: $calendar.alertsEnabled)
+                        .toggleStyle(.switch).controlSize(.mini)
+                    Button("Probar aviso") {
+                        let now = Date()
+                        vm.showCalendarAlerts([CalendarEventItem(
+                            id: "notification-preview", title: "Así se verá tu próximo evento",
+                            startDate: now, endDate: now.addingTimeInterval(1800), isAllDay: false,
+                            colorHex: "#0A84FF", sourceLabel: "Aviso de prueba", provider: .mac, meetingURL: nil
+                        )])
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.blue)
+                }
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.75))
+                Text("Con nnotch abierto, avisa al inicio de los eventos con hora de los calendarios habilitados.")
+                    .font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
 
                 Divider().overlay(Color.white.opacity(0.08))
 
@@ -565,84 +494,4 @@ struct CalendarTabView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func eventRow(_ event: CalendarEventItem) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color(hex: event.colorHex))
-                .frame(width: 3.5, height: 28)
-
-            VStack(alignment: .leading, spacing: 1.5) {
-                Text(event.title)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
-
-                HStack(spacing: 5) {
-                    if event.isAllDay {
-                        Text("Todo el día")
-                    } else {
-                        let day = event.startDate.formatted(.dateTime.day().month(.abbreviated))
-                        let start = event.startDate.formatted(.dateTime.hour().minute())
-                        let end = event.endDate.formatted(.dateTime.hour().minute())
-                        Text("\(day) · \(start)–\(end)")
-                            .monospacedDigit()
-                    }
-                    Text("·")
-                    Text(event.sourceLabel)
-                        .lineLimit(1)
-                }
-                .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.42))
-            }
-
-            Spacer(minLength: 4)
-
-            if let meetingURL = event.meetingURL {
-                Button {
-                    NSWorkspace.shared.open(meetingURL)
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 8))
-                        Text("Unirse")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(prefs.accentColor))
-                }
-                .buttonStyle(.plain)
-                .help("Unirse a la videollamada")
-            }
-        }
-        .padding(.vertical, 1)
-    }
-
-    private func reminderRow(_ reminder: EKReminder) -> some View {
-        HStack(spacing: 7) {
-            Button {
-                calendar.complete(reminder)
-            } label: {
-                Image(systemName: "circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.orange)
-            }
-            .buttonStyle(.plain)
-            .help("Marcar como completado")
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(reminder.title ?? "Recordatorio")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(1)
-                if let due = reminder.dueDateComponents?.date {
-                    Text(due, format: .dateTime.day().month().hour().minute())
-                        .font(.system(size: 9))
-                        .foregroundStyle(.white.opacity(0.4))
-                }
-            }
-            Spacer(minLength: 0)
-        }
-    }
 }

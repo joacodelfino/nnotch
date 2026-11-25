@@ -11,9 +11,9 @@
 	<key>CFBundleExecutable</key>
 	<string>nnotch</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4.3</string>
+	<string>0.5.0</string>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -34,9 +34,5 @@
 	<string>Accede a tu calendario para mostrar los eventos del día en el notch.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Accede a tu calendario para mostrar los eventos del día en el notch.</string>
-	<key>NSRemindersUsageDescription</key>
-	<string>Accede a tus recordatorios pendientes para mostrarlos en el notch.</string>
-	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>Accede a tus recordatorios pendientes para mostrarlos y completarlos desde el notch.</string>
 </dict>
 </plist>

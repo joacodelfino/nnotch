@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(shortcuts)
             .environmentObject(calendar)
         windowController = NotchWindowController(viewModel: viewModel, rootView: root)
+        calendar.onEventsStarting = { [weak self] events in
+            self?.viewModel.showCalendarAlerts(events)
+        }
         setupStatusItem()
         setupEventMonitors()
         observePreferences()
