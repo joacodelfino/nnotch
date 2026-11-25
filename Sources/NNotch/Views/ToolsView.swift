@@ -4,8 +4,7 @@ import SwiftUI
 /// (Pomodoro, Cuenta Regresiva, Cronómetro y Sistema/Red).
 struct ToolsView: View {
     var body: some View {
-        VStack(spacing: 10) {
-            Spacer(minLength: 10)
+        VStack(spacing: 8) {
             HStack(spacing: 10) {
                 PomodoroCard()
                 CountdownCard()
@@ -17,7 +16,6 @@ struct ToolsView: View {
                 SystemMonitorCard()
             }
             .frame(maxHeight: .infinity)
-            Spacer(minLength: 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -43,7 +41,7 @@ struct PomodoroCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 CardTitle(
                     "Pomodoro · \(timers.pomodoroPhase.rawValue)",
@@ -61,8 +59,6 @@ struct PomodoroCard: View {
                 }
             }
 
-            Spacer(minLength: 0)
-
             Text(TimerCenter.format(timers.pomodoroRemaining))
                 .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
@@ -71,8 +67,6 @@ struct PomodoroCard: View {
             ProgressView(value: progress)
                 .tint(phaseTint)
                 .animation(Motion.standard, value: progress)
-
-            Spacer(minLength: 0)
 
             HStack(spacing: 8) {
                 RoundIconButton(
@@ -124,7 +118,7 @@ struct CountdownCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 CardTitle("Cuenta Regresiva", symbol: "timer", tint: .orange)
                 Spacer()
@@ -155,8 +149,6 @@ struct CountdownCard: View {
                 }
             }
 
-            Spacer(minLength: 0)
-
             Text(TimerCenter.format(displayedSeconds))
                 .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
@@ -165,8 +157,6 @@ struct CountdownCard: View {
             ProgressView(value: progress)
                 .tint(.orange)
                 .animation(Motion.standard, value: progress)
-
-            Spacer(minLength: 0)
 
             HStack(spacing: 8) {
                 RoundIconButton(
@@ -206,7 +196,7 @@ struct StopwatchCard: View {
     @EnvironmentObject private var timers: TimerCenter
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 CardTitle("Cronómetro", symbol: "stopwatch", tint: .cyan)
                 Spacer()
@@ -222,14 +212,10 @@ struct StopwatchCard: View {
                 }
             }
 
-            Spacer(minLength: 0)
-
             Text(TimerCenter.format(timers.stopwatchElapsed))
                 .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
-
-            Spacer(minLength: 0)
 
             HStack(spacing: 8) {
                 RoundIconButton(
@@ -264,7 +250,7 @@ struct SystemMonitorCard: View {
     @EnvironmentObject private var network: NetworkMonitor
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 CardTitle("Sistema y Red", symbol: "gauge.with.dots.needle.50percent", tint: .orange)
                 Spacer()
@@ -285,8 +271,6 @@ struct SystemMonitorCard: View {
                 }
             }
 
-            Spacer(minLength: 0)
-
             meter(
                 label: "CPU",
                 fraction: stats.cpuUsage,
@@ -300,8 +284,6 @@ struct SystemMonitorCard: View {
                 detail: String(format: "%.1f / %.0f GB", stats.memoryUsedGB, stats.memoryTotalGB),
                 tint: .purple
             )
-
-            Spacer(minLength: 0)
 
             HStack(spacing: 10) {
                 HStack(spacing: 3) {
