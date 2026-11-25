@@ -40,7 +40,7 @@ struct ExternalCalendarFeed: Identifiable, Codable, Equatable {
     var isEnabled: Bool = true
 }
 
-struct CalendarEventItem: Identifiable, Equatable {
+struct CalendarEventItem: Identifiable, Codable, Equatable {
     let id: String
     let title: String
     let startDate: Date
@@ -75,6 +75,10 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var openReminders: [EKReminder] = []
     @Published private(set) var isSyncingExternal = false
     @Published private(set) var externalError: String?
+    @Published private(set) var isGoogleSignedIn = false
+    @Published private(set) var googleConnectedEmail: String?
+
+    let googleSession = GoogleCalendarSession()
 
     @Published var selectedProvider: CalendarProvider {
         didSet {
@@ -98,8 +102,10 @@ final class CalendarManager: ObservableObject {
     }
 
     private var cachedExternalEvents: [CalendarEventItem] = []
+    private var cachedGoogleSessionEvents: [CalendarEventItem] = []
     private let store = EKEventStore()
     private var loading = true
+    private var cancellables: Set<AnyCancellable> = []
     private let log = Logger(subsystem: "com.joacodelfino.nnotch", category: "Calendar")
 
     init() {
@@ -113,14 +119,49 @@ final class CalendarManager: ObservableObject {
         }
 
         externalFeeds = Persistence.load([ExternalCalendarFeed].self, from: "calendar_feeds.json") ?? []
+        cachedGoogleSessionEvents = Persistence.load([CalendarEventItem].self, from: "google_session_events.json") ?? []
         loading = false
 
-        updateAccessFromSystem()
-        if eventAccess == .granted || reminderAccess == .granted {
-            refresh()
-        } else if !externalFeeds.isEmpty {
-            refreshExternalFeeds()
+        isGoogleSignedIn = googleSession.isSignedIn
+        googleConnectedEmail = googleSession.connectedEmail
+
+        googleSession.$isSignedIn
+            .sink { [weak self] signedIn in self?.isGoogleSignedIn = signedIn }
+            .store(in: &cancellables)
+
+        googleSession.$connectedEmail
+            .sink { [weak self] email in self?.googleConnectedEmail = email }
+            .store(in: &cancellables)
+
+        googleSession.$isSyncing
+            .sink { [weak self] syncing in
+                guard let self else { return }
+                self.isSyncingExternal = syncing
+            }
+            .store(in: &cancellables)
+
+        googleSession.onEventsSynced = { [weak self] events, err in
+            guard let self else { return }
+            if let err {
+                self.externalError = err
+            } else {
+                self.externalError = nil
+                self.cachedGoogleSessionEvents = events
+                Persistence.save(events, to: "google_session_events.json")
+            }
+            self.mergeAllEvents()
         }
+
+        NotificationCenter.default.addObserver(
+            forName: .EKEventStoreChanged,
+            object: store,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rebuildMacEvents() }
+        }
+
+        updateAccessFromSystem()
+        refresh()
     }
 
     /// Eventos filtrados según el origen elegido en la barra superior de Calendario.
@@ -138,8 +179,26 @@ final class CalendarManager: ObservableObject {
     }
 
     var hasGoogleSourceConfigured: Bool {
-        macCalendars.contains(where: { $0.isGoogleAccount })
+        isGoogleSignedIn
+            || macCalendars.contains(where: { $0.isGoogleAccount })
             || externalFeeds.contains(where: { $0.provider == .google && $0.isEnabled })
+    }
+
+    func signInWithGoogle() {
+        googleSession.startInteractiveSignIn()
+    }
+
+    func signOutFromGoogle() {
+        googleSession.signOut()
+        cachedGoogleSessionEvents = []
+        Persistence.save([CalendarEventItem](), to: "google_session_events.json")
+        mergeAllEvents()
+    }
+
+    func openMacInternetAccounts() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     var hasCustomSourceConfigured: Bool {
@@ -284,6 +343,9 @@ final class CalendarManager: ObservableObject {
     func refresh() {
         rebuildMacEvents()
         refreshExternalFeeds()
+        if isGoogleSignedIn {
+            googleSession.syncInBackground()
+        }
         if reminderAccess == .granted {
             let predicate = store.predicateForReminders(in: nil)
             store.fetchReminders(matching: predicate) { [weak self] reminders in
@@ -314,9 +376,11 @@ final class CalendarManager: ObservableObject {
         let ekCalendars = store.calendars(for: .event)
         macCalendars = ekCalendars.map { cal in
             let sourceTitle = cal.source?.title ?? "Mac"
+            let isCalDAV = cal.source?.sourceType == .calDAV
             let isGoogle = sourceTitle.localizedCaseInsensitiveContains("google")
                 || sourceTitle.localizedCaseInsensitiveContains("gmail")
                 || cal.title.localizedCaseInsensitiveContains("@gmail.com")
+                || (isCalDAV && !sourceTitle.localizedCaseInsensitiveContains("icloud"))
             let hex = cal.cgColor.flatMap { Color(cgColor: $0).hexString } ?? (isGoogle ? "#0A84FF" : "#FF375F")
             return MacCalendarSourceInfo(
                 id: cal.calendarIdentifier,
@@ -347,9 +411,11 @@ final class CalendarManager: ObservableObject {
             let cal = ev.calendar as EKCalendar?
             let sourceTitle = cal?.source?.title ?? "Mac"
             let calTitle = cal?.title ?? "Mac"
+            let isCalDAV = cal?.source?.sourceType == .calDAV
             let isGoogle = sourceTitle.localizedCaseInsensitiveContains("google")
                 || sourceTitle.localizedCaseInsensitiveContains("gmail")
                 || calTitle.localizedCaseInsensitiveContains("@gmail.com")
+                || (isCalDAV && !sourceTitle.localizedCaseInsensitiveContains("icloud"))
             let hex = cal?.cgColor.flatMap { Color(cgColor: $0).hexString } ?? (isGoogle ? "#0A84FF" : "#FF375F")
             let provider: CalendarProvider = isGoogle ? .google : .mac
             let meeting = Self.extractMeetingURL(from: [ev.url?.absoluteString, ev.location, ev.notes])
@@ -403,9 +469,18 @@ final class CalendarManager: ObservableObject {
     }
 
     private func mergeAllEvents() {
-        let combined = (cachedMacEvents + cachedExternalEvents)
+        var seenKeys = Set<String>()
+        var deduped: [CalendarEventItem] = []
+        let all = (cachedMacEvents + cachedGoogleSessionEvents + cachedExternalEvents)
             .sorted { $0.startDate < $1.startDate }
-        allEvents = Array(combined.prefix(50))
+
+        for item in all {
+            let dedupKey = "\(item.title.lowercased())|\(Int(item.startDate.timeIntervalSince1970))"
+            if seenKeys.insert(dedupKey).inserted {
+                deduped.append(item)
+            }
+        }
+        allEvents = Array(deduped.prefix(50))
     }
 
     func complete(_ reminder: EKReminder) {
@@ -435,7 +510,7 @@ final class CalendarManager: ObservableObject {
         return nil
     }
 
-    nonisolated private static func parseICS(text: String, feed: ExternalCalendarFeed) -> [CalendarEventItem] {
+    nonisolated static func parseICS(text: String, feed: ExternalCalendarFeed) -> [CalendarEventItem] {
         // Desplegar líneas plegadas RFC 5545 (CRLF + espacio/tab)
         let unfolded = text
             .replacingOccurrences(of: "\r\n ", with: "")
@@ -455,6 +530,7 @@ final class CalendarManager: ObservableObject {
         var location = ""
         var description = ""
         var urlStr = ""
+        var rrule = ""
         var dtStart: Date?
         var dtEnd: Date?
         var isAllDay = false
@@ -468,6 +544,7 @@ final class CalendarManager: ObservableObject {
                 location = ""
                 description = ""
                 urlStr = ""
+                rrule = ""
                 dtStart = nil
                 dtEnd = nil
                 isAllDay = false
@@ -475,15 +552,18 @@ final class CalendarManager: ObservableObject {
             }
             if trimmed == "END:VEVENT" {
                 if inEvent, let start = dtStart {
-                    let end = dtEnd ?? start.addingTimeInterval(isAllDay ? 86400 : 3600)
-                    if end >= windowStart && start <= windowEnd {
-                        let meeting = extractMeetingURL(from: [urlStr, location, description])
+                    let duration = max((dtEnd ?? start.addingTimeInterval(isAllDay ? 86400 : 3600)).timeIntervalSince(start), 0)
+                    let occurrences = expandOccurrences(start: start, duration: duration, rrule: rrule, windowStart: windowStart, windowEnd: windowEnd)
+                    let cleanTitle = summary.isEmpty ? "Evento" : unescapeICS(summary)
+                    let meeting = extractMeetingURL(from: [urlStr, location, description])
+                    for occStart in occurrences {
+                        let occEnd = occStart.addingTimeInterval(duration)
                         results.append(
                             CalendarEventItem(
-                                id: "\(feed.id.uuidString)-\(uid)-\(start.timeIntervalSince1970)",
-                                title: summary.isEmpty ? "Evento" : unescapeICS(summary),
-                                startDate: start,
-                                endDate: end,
+                                id: "\(feed.id.uuidString)-\(uid)-\(occStart.timeIntervalSince1970)",
+                                title: cleanTitle,
+                                startDate: occStart,
+                                endDate: occEnd,
                                 isAllDay: isAllDay,
                                 colorHex: feed.colorHex,
                                 sourceLabel: feed.name,
@@ -512,6 +592,8 @@ final class CalendarManager: ObservableObject {
                 description = valuePart
             case "URL":
                 urlStr = valuePart
+            case "RRULE":
+                rrule = valuePart.uppercased()
             case "DTSTART":
                 let parsed = parseICSDate(valuePart, keyParams: keyPart)
                 dtStart = parsed.date
@@ -523,6 +605,86 @@ final class CalendarManager: ObservableObject {
             }
         }
         return results
+    }
+
+    nonisolated private static func expandOccurrences(
+        start: Date,
+        duration: TimeInterval,
+        rrule: String,
+        windowStart: Date,
+        windowEnd: Date
+    ) -> [Date] {
+        let end = start.addingTimeInterval(duration)
+        if rrule.isEmpty {
+            return (end >= windowStart && start <= windowEnd) ? [start] : []
+        }
+
+        var params: [String: String] = [:]
+        for part in rrule.split(separator: ";") {
+            let kv = part.split(separator: "=", maxSplits: 1)
+            if kv.count == 2 {
+                params[String(kv[0])] = String(kv[1])
+            }
+        }
+        if let untilStr = params["UNTIL"],
+           let untilDate = parseICSDate(untilStr, keyParams: "").date,
+           untilDate < windowStart {
+            return []
+        }
+
+        let cal = Calendar.current
+        let freq = params["FREQ"] ?? ""
+        var dates: [Date] = []
+
+        if freq == "DAILY" {
+            let interval = max(Int(params["INTERVAL"] ?? "1") ?? 1, 1)
+            var current = start
+            var guardCount = 0
+            while current <= windowEnd && guardCount < 1500 {
+                if current.addingTimeInterval(duration) >= windowStart {
+                    dates.append(current)
+                }
+                guard let next = cal.date(byAdding: .day, value: interval, to: current) else { break }
+                current = next
+                guardCount += 1
+            }
+        } else if freq == "WEEKLY" {
+            let timeComps = cal.dateComponents([.hour, .minute, .second], from: start)
+            let dayMap: [String: Int] = ["SU": 1, "MO": 2, "TU": 3, "WE": 4, "TH": 5, "FR": 6, "SA": 7]
+            if let byDayRaw = params["BYDAY"] {
+                let targetWeekdays = Set(byDayRaw.split(separator: ",").compactMap { dayMap[String($0.suffix(2))] })
+                for offset in 0...14 {
+                    guard let dayDate = cal.date(byAdding: .day, value: offset, to: windowStart) else { continue }
+                    let wd = cal.component(.weekday, from: dayDate)
+                    if targetWeekdays.contains(wd),
+                       let candidate = cal.date(
+                           bySettingHour: timeComps.hour ?? 0,
+                           minute: timeComps.minute ?? 0,
+                           second: timeComps.second ?? 0,
+                           of: dayDate
+                       ),
+                       candidate >= start,
+                       candidate <= windowEnd {
+                        dates.append(candidate)
+                    }
+                }
+            } else {
+                let interval = max(Int(params["INTERVAL"] ?? "1") ?? 1, 1)
+                var current = start
+                var guardCount = 0
+                while current <= windowEnd && guardCount < 600 {
+                    if current.addingTimeInterval(duration) >= windowStart {
+                        dates.append(current)
+                    }
+                    guard let next = cal.date(byAdding: .weekOfYear, value: interval, to: current) else { break }
+                    current = next
+                    guardCount += 1
+                }
+            }
+        } else if end >= windowStart && start <= windowEnd {
+            dates.append(start)
+        }
+        return dates
     }
 
     nonisolated private static func parseICSDate(_ raw: String, keyParams: String) -> (date: Date?, isAllDay: Bool) {

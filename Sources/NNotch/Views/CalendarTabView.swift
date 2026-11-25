@@ -7,6 +7,7 @@ import SwiftUI
 struct CalendarTabView: View {
     @EnvironmentObject private var calendar: CalendarManager
     @EnvironmentObject private var prefs: Preferences
+    @EnvironmentObject private var vm: NotchViewModel
     @State private var showingConfig = false
     @State private var feedName = ""
     @State private var feedURL = ""
@@ -144,18 +145,14 @@ struct CalendarTabView: View {
         case .mac where calendar.eventAccess == .denied:
             macPermissionDeniedView
         case .google where !calendar.hasGoogleSourceConfigured && calendar.filteredEvents.isEmpty:
-            externalSetupPrompt(
-                provider: .google,
-                title: "Conectá tu Google Calendar",
-                subtitle: "Podés pegar tu link iCal (.ics) privado de Google Calendar o sincronizar tu cuenta Google en macOS."
-            )
+            googleSignInPrompt
         case .custom where !calendar.hasCustomSourceConfigured && calendar.filteredEvents.isEmpty:
             externalSetupPrompt(
                 provider: .custom,
                 title: "Conectá cualquier calendario (.ics)",
                 subtitle: "Agregá un link iCal (.ics) de Outlook, Teams, Notion Calendar, facultad o trabajo."
             )
-        case .all where calendar.eventAccess != .granted && calendar.externalFeeds.isEmpty:
+        case .all where calendar.eventAccess != .granted && !calendar.isGoogleSignedIn && calendar.externalFeeds.isEmpty:
             macPermissionRequestView
         default:
             VStack(alignment: .leading, spacing: 6) {
@@ -248,48 +245,92 @@ struct CalendarTabView: View {
 
     private var configPanel: some View {
         HStack(alignment: .top, spacing: 14) {
-            // Columna izquierda: agregar link .ics (Google Calendar / Outlook / otro)
+            // Columna izquierda: Cuenta de Google directa + links .ics opcionales
             VStack(alignment: .leading, spacing: 7) {
-                CardTitle("Conectar Google Calendar u otro (.ics)", symbol: "plus.circle.fill", tint: prefs.accentColor)
+                CardTitle("Cuenta de Google", symbol: "globe", tint: .blue)
 
-                HStack(spacing: 6) {
-                    TextField("Nombre (ej. Google Personal, Trabajo)", text: $feedName)
-                        .textFieldStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
+                if calendar.isGoogleSignedIn {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.green)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(calendar.googleConnectedEmail ?? "Cuenta de Google conectada")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                            Text("Sesión activa · sincronización automática")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white.opacity(0.45))
+                        }
+                        Spacer()
+                        Button("Cerrar sesión") {
+                            calendar.signOutFromGoogle()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.1)))
+                } else {
+                    HStack(spacing: 8) {
+                        Button {
+                            vm.collapseNow()
+                            calendar.signInWithGoogle()
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "person.crop.circle.badge.checkmark")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Iniciar sesión con Google")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(prefs.accentColor))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button("Cuentas de macOS…") {
+                            calendar.openMacInternetAccounts()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
                 }
 
+                Divider().overlay(Color.white.opacity(0.08))
+
+                CardTitle("Calendarios externos por link (.ics)", symbol: "link", tint: prefs.accentColor)
+
                 HStack(spacing: 6) {
-                    TextField("Pegá la URL iCal (.ics) del calendario…", text: $feedURL)
+                    TextField("Nombre (ej. Outlook, Facultad)", text: $feedName)
                         .textFieldStyle(.plain)
                         .font(.caption)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
+
+                    TextField("URL iCal (.ics)…", text: $feedURL)
+                        .textFieldStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.07)))
                         .onSubmit { submitFeed() }
 
                     Button {
                         submitFeed()
                     } label: {
-                        Text("Sumar")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(prefs.accentColor))
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 15))
+                            .foregroundStyle(prefs.accentColor)
                     }
                     .buttonStyle(.plain)
                     .disabled(feedURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-
-                Text("En Google Calendar: Configuración ▸ tu calendario ▸ \"Dirección secreta en formato iCal (.ics)\".")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .fixedSize(horizontal: false, vertical: true)
 
                 if !calendar.externalFeeds.isEmpty {
                     ScrollView(showsIndicators: false) {
@@ -412,24 +453,65 @@ struct CalendarTabView: View {
 
     // MARK: - Prompts & Rows
 
+    private var googleSignInPrompt: some View {
+        VStack(spacing: 9) {
+            Spacer()
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.system(size: 26))
+                .foregroundStyle(.blue)
+            Text("Iniciá sesión en tu cuenta de Google")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.9))
+            Text("Logueate una sola vez con tu mail de Google y tus calendarios quedan vinculados automáticamente.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.45))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 14)
+            HStack(spacing: 8) {
+                Button {
+                    vm.collapseNow()
+                    calendar.signInWithGoogle()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Iniciar sesión con Google")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                Button("Cuentas de macOS…") {
+                    calendar.openMacInternetAccounts()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private var macPermissionRequestView: some View {
         VStack(spacing: 8) {
             Spacer()
             Image(systemName: "calendar.badge.checkmark")
                 .font(.system(size: 26))
                 .foregroundStyle(.white.opacity(0.3))
-            Text("Mirá tu Calendario de Mac o conectá Google Calendar")
+            Text("Iniciá sesión con Google o activá el Calendario de Mac")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.white.opacity(0.75))
             HStack(spacing: 8) {
-                Button("Permitir Calendario de Mac") {
-                    calendar.requestAccessAndRefresh()
+                Button("Iniciar sesión con Google") {
+                    vm.collapseNow()
+                    calendar.signInWithGoogle()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
 
-                Button("Conectar Google / .ics") {
-                    withAnimation(Motion.quick) { showingConfig = true }
+                Button("Permitir Calendario de Mac") {
+                    calendar.requestAccessAndRefresh()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
