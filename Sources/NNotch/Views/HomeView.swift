@@ -27,31 +27,21 @@ struct MusicCard: View {
     @State private var dragFraction: Double?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if let playing = music.nowPlaying {
-                HStack(alignment: .top, spacing: 10) {
-                    artworkView
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(playing.title)
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                        Text(playing.artist)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        HStack(spacing: 4) {
-                            Image(systemName: playing.isWeb ? "globe" : "waveform")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text(playing.sourceLabel)
-                                .font(.system(size: 9, weight: .semibold))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(prefs.accentColor.opacity(0.85))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                artworkHero(playing)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(playing.title)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(playing.artist)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 progressBar(playing)
                 controls
             } else if music.automationDenied {
@@ -96,27 +86,56 @@ struct MusicCard: View {
         .islandCard()
     }
 
-    @ViewBuilder
-    private var artworkView: some View {
+    /// Carátula grande que ocupa todo el espacio libre de la tarjeta (ideal para miniaturas 16:9 de YouTube).
+    private func artworkHero(_ playing: NowPlaying) -> some View {
         Button {
             music.activateSource()
         } label: {
-            if let artwork = music.artwork {
-                Image(nsImage: artwork)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 84, height: 84)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-                    .frame(width: 84, height: 84)
-                    .overlay(
+            Color.white.opacity(0.06)
+                .frame(maxWidth: .infinity, minHeight: 70, maxHeight: .infinity)
+                .overlay {
+                    if let artwork = music.artwork {
+                        Image(nsImage: artwork)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
                         Image(systemName: "music.note")
-                            .font(.system(size: 24))
+                            .font(.system(size: 30))
                             .foregroundStyle(.white.opacity(0.3))
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.65)],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-            }
+                    .frame(height: 38)
+                }
+                .overlay(alignment: .bottomLeading) {
+                    HStack(spacing: 4) {
+                        Image(systemName: playing.isWeb ? "globe" : "waveform")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(playing.sourceLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(prefs.accentColor.opacity(0.85)))
+                    .padding(7)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if playing.isPlaying && prefs.showEqualizer {
+                        EqualizerBars(playing: true, tint: .white)
+                            .padding(6)
+                            .background(Circle().fill(.black.opacity(0.45)))
+                            .padding(7)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .help("Ir a la aplicación o pestaña en reproducción")

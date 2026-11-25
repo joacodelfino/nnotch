@@ -451,8 +451,13 @@ final class MusicManager: ObservableObject {
                 if artworkURL == nil {
                     artworkURL = "https://i.ytimg.com/vi/\(ytID)/hqdefault.jpg"
                 }
+                let meta = fetchYouTubeMeta(videoID: ytID)
+                let genericTitles = ["youtube", "youtube music", ""]
+                if genericTitles.contains(parsed.title.lowercased()), let realTitle = meta.title {
+                    parsed.title = realTitle
+                }
                 if parsed.artist.isEmpty || parsed.artist == siteName || parsed.artist == browser.shortName {
-                    if let author = fetchYouTubeAuthor(videoID: ytID) {
+                    if let author = meta.author {
                         parsed.artist = author
                     }
                 }
@@ -708,30 +713,35 @@ final class MusicManager: ObservableObject {
         return nil
     }
 
-    /// Obtiene el nombre real del canal de YouTube vía oEmbed público y lo guarda en caché.
-    nonisolated private static func fetchYouTubeAuthor(videoID: String) -> String? {
+    /// Obtiene título real y canal de un video de YouTube vía oEmbed público (con caché).
+    nonisolated private static func fetchYouTubeMeta(videoID: String) -> (author: String?, title: String?) {
         let key = videoID as NSString
-        if let cached = ytMetaCache.object(forKey: key),
-           let author = cached["author"] as? String {
-            return author.isEmpty ? nil : author
+        if let cached = ytMetaCache.object(forKey: key) {
+            let a = cached["author"] as? String ?? ""
+            let t = cached["title"] as? String ?? ""
+            return (a.isEmpty ? nil : a, t.isEmpty ? nil : t)
         }
         guard let oembedURL = URL(string: "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=\(videoID)&format=json") else {
-            return nil
+            return (nil, nil)
         }
         var request = URLRequest(url: oembedURL)
         request.timeoutInterval = 2.0
         let sem = DispatchSemaphore(value: 0)
         nonisolated(unsafe) var authorResult: String?
+        nonisolated(unsafe) var titleResult: String?
         URLSession.shared.dataTask(with: request) { data, _, _ in
             defer { sem.signal() }
             guard let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let author = json["author_name"] as? String else { return }
-            authorResult = author
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            authorResult = json["author_name"] as? String
+            titleResult = json["title"] as? String
         }.resume()
         _ = sem.wait(timeout: .now() + 2.0)
-        ytMetaCache.setObject(["author": authorResult ?? ""] as NSDictionary, forKey: key)
-        return authorResult
+        ytMetaCache.setObject(
+            ["author": authorResult ?? "", "title": titleResult ?? ""] as NSDictionary,
+            forKey: key
+        )
+        return (authorResult, titleResult)
     }
 
     // MARK: - Browser JS Probe & Execution
