@@ -25,6 +25,7 @@ struct MusicCard: View {
     @EnvironmentObject private var music: MusicManager
     @EnvironmentObject private var prefs: Preferences
     @State private var dragFraction: Double?
+    @State private var showSafariHelp = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -44,6 +45,25 @@ struct MusicCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 progressBar(playing)
                 controls
+                if music.webJSPermissionMissing && playing.webBrowserApp == "Safari" {
+                    Button("Habilitar controles de Safari") { showSafariHelp = true }
+                        .font(.caption2)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.orange)
+                        .popover(isPresented: $showSafariHelp) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Controles de YouTube en Safari").font(.headline)
+                                Text("Safari no permite leer o controlar el reproductor de esta pestaña. Comprobá que la página terminó de cargar y que JavaScript desde eventos de Apple está habilitado en el menú Desarrollo de Safari.")
+                                Text("Después volvé a intentar. Sin ese acceso, siguiente y anterior pueden no estar disponibles.")
+                                Button("Volver a comprobar") {
+                                    music.refresh()
+                                    showSafariHelp = false
+                                }
+                            }
+                            .padding()
+                            .frame(width: 300)
+                        }
+                }
             } else if music.automationDenied {
                 VStack(spacing: 8) {
                     Spacer()
