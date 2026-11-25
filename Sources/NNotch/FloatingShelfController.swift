@@ -115,7 +115,10 @@ private struct FloatingShelfView: View {
             } else {
                 HStack {
                     ConfirmingButton(title: "Vaciar", systemImage: "trash") { shelf.removeAll() }
-                        .frame(width: 110, alignment: .leading)
+                        .fixedSize()
+                        .padding(4)
+                        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .contentShape(Rectangle())
                     Spacer()
                 }
                 .padding(.horizontal, 8)

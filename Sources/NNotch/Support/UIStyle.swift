@@ -27,7 +27,6 @@ struct ConfirmingButton: View {
     let action: () -> Void
 
     @State private var armed = false
-    @State private var hovering = false
 
     var body: some View {
         Button {
@@ -46,15 +45,11 @@ struct ConfirmingButton: View {
                 systemImage: armed ? "exclamationmark.triangle.fill" : systemImage
             )
             .font(.caption2)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(hovering ? Color.white.opacity(0.1) : Color.white.opacity(0.045)))
+            .contentShape(Rectangle())
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
         }
-        .frame(minHeight: 28)
-        .onHover { hovering = $0 }
+        .contentShape(Rectangle())
         .buttonStyle(.plain)
         .foregroundStyle(armed ? Color.red : tint)
         .accessibilityLabel(armed ? "\(title) — confirmar" : title)
