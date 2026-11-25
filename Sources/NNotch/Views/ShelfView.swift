@@ -6,7 +6,6 @@ struct ShelfView: View {
     @EnvironmentObject private var shelf: ShelfManager
     @EnvironmentObject private var vm: NotchViewModel
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
 
     var body: some View {
         VStack(spacing: 8) {
@@ -44,16 +43,7 @@ struct ShelfView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: columns, spacing: 10) {
-                        ForEach(shelf.items) { item in
-                            ShelfItemView(item: item)
-                                .transition(.opacity)
-                        }
-                    }
-                    .padding(.top, 2)
-                    .animation(Motion.standard, value: shelf.items.count)
-                }
+                SelectableShelfGrid(columnCount: 5)
             }
         }
         .islandCard()
@@ -92,16 +82,8 @@ struct ShelfItemView: View {
                     .padding(4)
             }
         }
-        .overlay(alignment: .topLeading) {
-            Button { shelf.toggleSelection(item) } label: {
-                Image(systemName: shelf.selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(shelf.selectedIDs.contains(item.id) ? Color.orange : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .padding(3)
-            .help("Seleccionar archivo")
-        }
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(shelf.selectedIDs.contains(item.id) ? Color.orange : .clear))
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(Motion.quick, value: hovering)
         .onDrag {
@@ -110,6 +92,13 @@ struct ShelfItemView: View {
         .onTapGesture(count: 2) {
             NSWorkspace.shared.open(item.storedURL)
         }
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift) {
+                shelf.toggleSelection(item)
+            } else {
+                shelf.selectedIDs = [item.id]
+            }
+        }
         .contextMenu {
             Button("Abrir") { NSWorkspace.shared.open(item.storedURL) }
             Button("Compartir por AirDrop") { shelf.airDrop(item) }
@@ -117,6 +106,6 @@ struct ShelfItemView: View {
             Divider()
             Button("Quitar de la bandeja") { shelf.remove(item) }
         }
-        .help("Doble click para abrir · arrastrá afuera para soltar donde quieras")
+        .help("Clic para seleccionar · ⌘-clic para sumar · doble clic para abrir")
     }
 }

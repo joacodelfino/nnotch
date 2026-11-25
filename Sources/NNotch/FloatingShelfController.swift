@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -6,6 +7,7 @@ import UniformTypeIdentifiers
 final class FloatingShelfController {
     private let shelf: ShelfManager
     private var panel: NSPanel?
+    private var itemsObserver: AnyCancellable?
     private var detector = DragShakeDetector()
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -14,6 +16,10 @@ final class FloatingShelfController {
 
     init(shelf: ShelfManager) {
         self.shelf = shelf
+        itemsObserver = shelf.$items.map { $0.isEmpty }.removeDuplicates()
+            .dropFirst().sink { [weak self] empty in
+                if empty { self?.panel?.orderOut(nil) }
+            }
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
@@ -92,11 +98,7 @@ private struct FloatingShelfView: View {
             } else {
                 ShelfSelectionBar()
                 ConfirmingButton(title: "Vaciar bandeja", systemImage: "trash") { shelf.removeAll() }
-                ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
-                        ForEach(shelf.items) { ShelfItemView(item: $0) }
-                    }
-                }
+                SelectableShelfGrid(columnCount: 4)
             }
         }
         .padding(16)

@@ -9,7 +9,9 @@ struct ShelfSelectionBar: View {
             Button(shelf.selectedIDs.count == shelf.items.count ? "Deseleccionar" : "Seleccionar todos") {
                 shelf.selectedIDs = shelf.selectedIDs.count == shelf.items.count ? [] : Set(shelf.items.map(\.id))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.orange)
             .font(.caption2)
             Spacer(minLength: 0)
             if !shelf.selectedItems.isEmpty {
