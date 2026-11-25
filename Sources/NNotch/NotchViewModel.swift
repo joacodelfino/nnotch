@@ -35,6 +35,10 @@ enum IslandTab: String, CaseIterable, Identifiable {
 @MainActor
 final class NotchViewModel: ObservableObject {
     @Published var isExpanded = false
+    /// Controla la visibilidad del contenido interno por separado de la silueta negra:
+    /// al cerrar, el contenido desaparece de inmediato para que no deje estela/fantasma
+    /// (ej. miniatura de YouTube) mientras la silueta negra se contrae con su animación suave.
+    @Published var isContentVisible = false
     @Published var activeTab: IslandTab = .home
     @Published var isDragHovering = false
     @Published var collapsedSize = CGSize(width: 196, height: 32)
@@ -69,10 +73,14 @@ final class NotchViewModel: ObservableObject {
         if !Preferences.shared.isTabEnabled(activeTab) {
             activeTab = .home
         }
-        guard !isExpanded else { return }
+        guard !isExpanded else {
+            isContentVisible = true
+            return
+        }
         Preferences.shared.performHaptic()
         withAnimation(Preferences.shared.expandSpring) {
             isExpanded = true
+            isContentVisible = true
         }
     }
 
@@ -81,12 +89,9 @@ final class NotchViewModel: ObservableObject {
         guard isExpanded else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.isMouseInside, !self.isDragHovering else { return }
-            withAnimation(Preferences.shared.collapseSpring) {
-                self.isExpanded = false
-            }
+            self.performSmoothCollapse()
         }
         if delay <= 0 {
-            // Senkron yolda saklamıyoruz: collapseWorkItem yalnız bekleyen işi tutsun.
             collapseWorkItem = nil
             work.perform()
         } else {
@@ -99,6 +104,17 @@ final class NotchViewModel: ObservableObject {
         collapseWorkItem?.cancel()
         isMouseInside = false
         isDragHovering = false
+        performSmoothCollapse()
+    }
+
+    private func performSmoothCollapse() {
+        // Ocultamos el contenido expandido de inmediato para que no se vea la miniatura
+        // de YouTube ni los textos deformándose dentro de la estela negra que se contrae.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isContentVisible = false
+        }
         withAnimation(Preferences.shared.collapseSpring) {
             isExpanded = false
         }

@@ -46,10 +46,10 @@ struct IslandView: View {
                     y: 5
                 )
             Group {
-                if vm.isExpanded {
+                if vm.isExpanded && vm.isContentVisible {
                     ExpandedView()
-                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                } else {
+                        .transition(.opacity)
+                } else if !vm.isExpanded {
                     CollapsedView()
                         .transition(.opacity)
                 }

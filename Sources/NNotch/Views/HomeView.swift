@@ -94,14 +94,19 @@ struct MusicCard: View {
             Color.white.opacity(0.06)
                 .frame(maxWidth: .infinity, minHeight: 70, maxHeight: .infinity)
                 .overlay {
-                    if let artwork = music.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 30))
-                            .foregroundStyle(.white.opacity(0.3))
+                    GeometryReader { geo in
+                        if let artwork = music.artwork {
+                            Image(nsImage: artwork)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .clipped()
+                        } else {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 30))
+                                .foregroundStyle(.white.opacity(0.3))
+                                .frame(width: geo.size.width, height: geo.size.height)
+                        }
                     }
                 }
                 .overlay(alignment: .bottom) {
