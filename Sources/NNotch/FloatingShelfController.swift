@@ -57,8 +57,11 @@ final class FloatingShelfController {
     func show() {
         if panel == nil {
             let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 340, height: 260),
-                                 styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+                                 styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
             window.title = "Bandeja flotante"
+            window.standardWindowButton(.closeButton)?.isHidden = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
             window.isFloatingPanel = true
             window.level = .floating
             window.hidesOnDeactivate = false
