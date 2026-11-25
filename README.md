@@ -12,7 +12,7 @@ Centro de control interactivo y modular en el notch para macOS, construido 100% 
 - **Notas Rápidas y Links (`NotesTabView`)**: bloc rápido persistente dentro del notch.
 - **Bandeja de Archivos (`ShelfView`)** y **Portapapeles (`ClipboardView`)**.
 - **Herramientas (`ToolsView`)**: Pomodoro, cuenta regresiva, cronómetro y monitor de sistema/red en grilla 2×2.
-- **Módulos encendibles/apagables (`SettingsView`)**: desde Ajustes podés activar o desactivar cualquier pestaña.
+- **Módulos encendibles/apagables (`SettingsView`)**: panel de ajustes rápido en 2 columnas dentro del notch + ventana completa de configuración.
 
 ## Compilar y ejecutar
 

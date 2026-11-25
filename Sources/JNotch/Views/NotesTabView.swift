@@ -3,8 +3,6 @@ import SwiftUI
 /// Quick notes on the left, saved links on the right.
 struct NotesTabView: View {
     @EnvironmentObject private var notes: NotesStore
-    @EnvironmentObject private var browser: BrowserModel
-    @EnvironmentObject private var vm: NotchViewModel
 
     @State private var newNote = ""
     @State private var newBookmark = ""
@@ -173,10 +171,10 @@ struct NotesTabView: View {
                             .transition(.opacity)
                             .onTapGesture { notes.open(bookmark) }
                             .contextMenu {
-                                Button("Abrir en navegador predeterminado") { notes.open(bookmark) }
-                                Button("Abrir en navegador de JNotch") {
-                                    browser.load(bookmark.urlString)
-                                    vm.activeTab = .browser
+                                Button("Abrir en navegador") { notes.open(bookmark) }
+                                Button("Copiar link") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(bookmark.urlString, forType: .string)
                                 }
                                 Divider()
                                 Button("Eliminar") { notes.removeBookmark(bookmark) }

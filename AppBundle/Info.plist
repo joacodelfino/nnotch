@@ -28,8 +28,6 @@
 	<string>NSApplication</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>El espejo rápido usa la cámara para verte directamente desde el notch.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Se usa para mostrar y controlar la música en reproducción de Apple Music y Spotify.</string>
 	<key>NSCalendarsUsageDescription</key>

@@ -15,8 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let notes = NotesStore()
     let shortcuts = AppShortcutsStore()
     let calendar = CalendarManager()
-    let camera = CameraManager()
-    let browser = BrowserModel()
 
     private var windowController: NotchWindowController?
     private var statusItem: NSStatusItem?
@@ -40,8 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(notes)
             .environmentObject(shortcuts)
             .environmentObject(calendar)
-            .environmentObject(camera)
-            .environmentObject(browser)
         windowController = NotchWindowController(viewModel: viewModel, rootView: root)
         setupStatusItem()
         setupEventMonitors()
@@ -152,16 +148,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openSettings() {
+        viewModel.collapseNow()
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+                contentRect: NSRect(x: 0, y: 0, width: 680, height: 500),
                 styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "JNotch"
+            window.title = "Ajustes de JNotch"
+            window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
+            window.isMovableByWindowBackground = true
             window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: .darkAqua)
             window.delegate = self
             window.contentView = NSHostingView(
                 rootView: SettingsView()
@@ -174,7 +174,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow = window
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.orderFrontRegardless()
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     // MARK: - Event monitors
