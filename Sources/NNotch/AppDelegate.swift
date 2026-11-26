@@ -110,11 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// gerektiğinde örneklenir — boşta CPU tüketimini azaltır.
     private func observeVisibility() {
         // Tek kaynak: iki tercihi de taze değerleriyle birlikte okur (kural bir yerde).
-        Publishers.CombineLatest(viewModel.$isExpanded, prefs.$collapsedRight)
-            .sink { [weak self] expanded, right in
+        Publishers.CombineLatest3(viewModel.$isExpanded, prefs.$collapsedLeft, prefs.$collapsedRight)
+            .sink { [weak self] expanded, left, right in
                 guard let self else { return }
-                self.stats.setActive(expanded)
-                self.network.setActive(expanded || right == .network)
+                self.stats.setActive(expanded || [left, right].contains(.cpu) || [left, right].contains(.memory))
+                self.network.setActive(expanded || left == .network || right == .network)
             }
             .store(in: &cancellables)
         // Panel açıldığında müziği hemen tazele (boşta 6s poll gecikmesini atla).
