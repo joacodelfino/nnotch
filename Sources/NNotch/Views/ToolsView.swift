@@ -81,9 +81,19 @@ struct PomodoroCard: View {
                     label: "Reiniciar Pomodoro"
                 ) { timers.pomodoroReset() }
 
+                if timers.activeAlarm == .pomodoro {
+                    AlarmStopButton(tint: phaseTint) {
+                        timers.stopAlarm()
+                    }
+                }
+
                 Spacer()
 
-                if !timers.pomodoroRunning {
+                if timers.activeAlarm == .pomodoro {
+                    Text("¡Alarma!")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(phaseTint)
+                } else if !timers.pomodoroRunning {
                     HStack(spacing: 10) {
                         MiniStepper(label: "Foco", value: $timers.workMinutes, range: 5...90)
                         MiniStepper(label: "Pausa", value: $timers.breakMinutes, range: 1...30)
@@ -175,9 +185,19 @@ struct CountdownCard: View {
                     timers.countdownReset()
                 }
 
+                if timers.activeAlarm == .countdown {
+                    AlarmStopButton(tint: .orange) {
+                        timers.stopAlarm()
+                    }
+                }
+
                 Spacer()
 
-                if !timers.countdownRunning && timers.countdownRemaining <= 0 {
+                if timers.activeAlarm == .countdown {
+                    Text("¡Tiempo cumplido!")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                } else if !timers.countdownRunning && timers.countdownRemaining <= 0 {
                     MiniStepper(label: "min", value: $timers.countdownMinutes, range: 1...240)
                 } else if timers.countdownRunning {
                     Text("En curso")
@@ -354,6 +374,29 @@ private struct NetworkSparkline: View {
 }
 
 // MARK: - Small controls
+
+struct AlarmStopButton: View {
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "bell.slash.fill")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Detener")
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(Capsule().fill(tint.opacity(0.85)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(IslandButtonStyle())
+        .accessibilityLabel("Detener alarma")
+    }
+}
 
 struct RoundIconButton: View {
     let symbol: String

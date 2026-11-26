@@ -43,6 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calendar.onEventsStarting = { [weak self] events in
             self?.viewModel.showCalendarAlerts(events)
         }
+        timers.onAlarmTriggered = { [weak self] _, _ in
+            guard let self else { return }
+            self.viewModel.expand(tab: .tools)
+        }
         floatingShelf = FloatingShelfController(shelf: shelf)
         setupStatusItem()
         setupEventMonitors()

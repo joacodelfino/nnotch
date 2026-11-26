@@ -34,6 +34,18 @@ struct PerformanceTests {
         timers.pomodoroReset()
         precondition(!hasTimer())
 
+        var triggeredSource: TimerCenter.AlarmSource?
+        timers.onAlarmTriggered = { source, _ in triggeredSource = source }
+        timers.startAlarm(source: .countdown, message: "Terminó la cuenta regresiva")
+        precondition(timers.activeAlarm == .countdown)
+        precondition(timers.alarmMessage == "Terminó la cuenta regresiva")
+        timers.countdownReset()
+        precondition(timers.activeAlarm == nil && timers.alarmMessage == nil, "Resetting countdown must silence alarm")
+        timers.startAlarm(source: .pomodoro, message: "Tiempo de foco terminado")
+        precondition(timers.activeAlarm == .pomodoro)
+        timers.stopAlarm()
+        precondition(timers.activeAlarm == nil && triggeredSource == nil)
+
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4096, pixelsHigh: 2048,
                                       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                       isPlanar: false, colorSpaceName: .deviceRGB,
