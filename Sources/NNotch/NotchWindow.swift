@@ -32,6 +32,12 @@ final class NotchPanel: NSPanel {
         animationBehavior = .none
     }
 
+    // This stationary overlay intentionally occupies the menu-bar/notch area.
+    // AppKit must not constrain it to the screen's visibleFrame below that area.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -212,7 +218,8 @@ final class NotchWindowController {
         let width = max(expanded.width, viewModel.collapsedPillSize.width) + 60
         let height = expanded.height + 40
         var frame = screen.topAnchoredRect(width: width, height: height)
-        frame.origin.x = frame.origin.x.rounded()
+        let scale = screen.backingScaleFactor
+        frame.origin.x = (frame.origin.x * scale).rounded() / scale
         if panel.frame != frame {
             panel.setFrame(frame, display: true)
         }

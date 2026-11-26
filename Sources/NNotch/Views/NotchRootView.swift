@@ -36,7 +36,7 @@ struct IslandView: View {
                 .fill(Color.black)
                 .overlay(
                     shape.strokeBorder(
-                        Color.white.opacity(vm.isExpanded ? 0.16 : 0.07),
+                        Color.white.opacity(vm.isExpanded ? 0.16 : 0),
                         lineWidth: 1
                     )
                 )
@@ -59,8 +59,8 @@ struct IslandView: View {
         }
         .frame(width: islandWidth, height: islandHeight)
         .clipShape(shape)
-        .shadow(color: .black.opacity(vm.isExpanded ? 0.5 : 0.25),
-                radius: vm.isExpanded ? 16 : 5, y: 5)
+        .shadow(color: .black.opacity(vm.isExpanded ? 0.5 : 0),
+                radius: vm.isExpanded ? 16 : 0, y: vm.isExpanded ? 5 : 0)
         .contentShape(shape)
         // Hover, SwiftUI `.onHover` ile DEĞİL (accessory app'te başka uygulama
         // önplandayken event vermiyor); NotchHostingView'daki .activeAlways
