@@ -2,128 +2,92 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct NotchRootView: View {
-    @EnvironmentObject private var vm: NotchViewModel
-
     var body: some View {
-        ZStack(alignment: .top) {
-            VStack(spacing: 0) {
-                IslandView()
-                Spacer(minLength: 0)
-            }
-            if vm.hasRightAlert {
-                NotchRightAlertStack()
-                    .frame(width: NotchViewModel.rightAlertWidth)
-                    .offset(
-                        x: (vm.collapsedPillSize.width / 2) + NotchViewModel.rightAlertGap + (NotchViewModel.rightAlertWidth / 2),
-                        y: 4
-                    )
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
+        VStack(spacing: 0) {
+            IslandView()
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
     }
 }
 
-/// Compact notification cards anchored directly to the right side of the collapsed notch.
-private struct NotchRightAlertStack: View {
+/// Inline alert strip seamlessly extending the right side of the collapsed notch.
+private struct NotchInlineRightAlert: View {
     @EnvironmentObject private var vm: NotchViewModel
     @EnvironmentObject private var reminders: ReminderStore
 
     var body: some View {
-        VStack(spacing: 6) {
-            ForEach(Array(vm.notchAlerts.prefix(3))) { alert in
-                NotchRightAlertCard(alert: alert) {
-                    if let remID = alert.reminderID, alert.isSticky {
-                        reminders.markCompleted(remID)
-                    }
-                    vm.dismissNotchAlert(id: alert.id)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
+        if let alert = vm.notchAlerts.first {
+            let accent = Color(hex: alert.colorHex)
+            let extraCount = max(vm.notchAlerts.count - 1, 0)
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: 1, height: 14)
 
-private struct NotchRightAlertCard: View {
-    let alert: NotchAlertItem
-    let onDismiss: () -> Void
+                Circle()
+                    .fill(accent)
+                    .frame(width: 6, height: 6)
 
-    private var accent: Color { Color(hex: alert.colorHex) }
+                Text(alert.stage == .upcoming15m ? "15m" : "Ahora")
+                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                    .foregroundStyle(accent)
 
-    private var badgeText: String {
-        switch alert.stage {
-        case .upcoming15m:
-            return "En 15 min · \(alert.scheduledDate.formatted(date: .omitted, time: .shortened))"
-        case .dueNow:
-            return "Ahora · \(alert.scheduledDate.formatted(date: .omitted, time: .shortened))"
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(accent)
-                .frame(width: 3, height: 34)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Image(systemName: alert.isSticky ? "bell.badge.fill" : "clock.badge.exclamationmark")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(accent)
-                    Text(badgeText)
-                        .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(accent)
-                        .lineLimit(1)
-                }
                 Text(alert.title)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(spacing: 4) {
-                Button(action: onDismiss) {
+                if extraCount > 0 {
+                    Text("+\(extraCount)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+
+                if let url = alert.meetingURL {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                        dismiss(alert)
+                    } label: {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.cyan)
+                            .frame(width: 18, height: 18)
+                            .background(Circle().fill(Color.cyan.opacity(0.18)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Unirse a la reunión")
+                }
+
+                Button {
+                    dismiss(alert)
+                } label: {
                     Image(systemName: alert.isSticky ? "checkmark" : "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(width: 20, height: 20)
-                        .background(Circle().fill(alert.isSticky ? accent.opacity(0.85) : Color.white.opacity(0.14)))
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(alert.isSticky ? accent.opacity(0.85) : Color.white.opacity(0.16)))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help(alert.isSticky ? "Listo / Sacar aviso" : "Cerrar aviso")
                 .accessibilityLabel("Cerrar aviso")
-
-                if let url = alert.meetingURL {
-                    Button {
-                        NSWorkspace.shared.open(url)
-                        onDismiss()
-                    } label: {
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 8.5, weight: .bold))
-                            .foregroundStyle(.cyan)
-                            .frame(width: 20, height: 18)
-                            .background(Capsule().fill(Color.cyan.opacity(0.16)))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Unirse a la reunión")
-                }
             }
+            .padding(.leading, 4)
+            .padding(.trailing, 10)
+            .frame(width: NotchViewModel.rightAlertExtensionWidth, height: vm.collapsedPillSize.height)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(height: 60)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.94))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(alert.isSticky ? accent.opacity(0.65) : Color.white.opacity(0.16), lineWidth: 1)
-                )
-        )
-        .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
+    }
+
+    private func dismiss(_ alert: NotchAlertItem) {
+        if let remID = alert.reminderID, alert.isSticky {
+            reminders.markCompleted(remID)
+        }
+        vm.dismissNotchAlert(id: alert.id)
     }
 }
 
@@ -138,11 +102,16 @@ struct IslandView: View {
     }
 
     private var islandWidth: CGFloat {
-        vm.isExpanded ? vm.expandedSize.width : vm.collapsedPillSize.width
+        vm.isExpanded ? vm.expandedSize.width : (vm.collapsedPillSize.width + vm.activeRightAlertExtension)
     }
 
     private var islandHeight: CGFloat {
         vm.isExpanded ? vm.expandedSize.height : vm.collapsedPillSize.height
+    }
+
+    /// Shift half of the right alert extension to the right so the physical notch stays perfectly centered.
+    private var horizontalOffset: CGFloat {
+        vm.isExpanded ? 0 : (vm.activeRightAlertExtension / 2)
     }
 
     var body: some View {
@@ -166,12 +135,22 @@ struct IslandView: View {
                     .accessibilityHidden(!vm.isExpanded || !vm.isContentVisible)
                     .animation(nil, value: vm.isContentVisible)
             }
-            CollapsedView()
-                .frame(width: vm.collapsedPillSize.width, height: vm.collapsedPillSize.height)
-                .frame(width: islandWidth, height: islandHeight, alignment: .top)
-                .opacity(vm.isExpanded ? 0 : 1)
-                .allowsHitTesting(!vm.isExpanded)
-                .accessibilityHidden(vm.isExpanded)
+            HStack(spacing: 0) {
+                CollapsedView()
+                    .frame(width: vm.collapsedPillSize.width, height: vm.collapsedPillSize.height)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        vm.expand()
+                    }
+                if vm.hasRightAlert {
+                    NotchInlineRightAlert()
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+            }
+            .frame(width: islandWidth, height: islandHeight, alignment: .topLeading)
+            .opacity(vm.isExpanded ? 0 : 1)
+            .allowsHitTesting(!vm.isExpanded)
+            .accessibilityHidden(vm.isExpanded)
 
         }
         .frame(width: islandWidth, height: islandHeight)
@@ -179,12 +158,8 @@ struct IslandView: View {
         .shadow(color: .black.opacity(vm.isExpanded ? 0.5 : 0),
                 radius: vm.isExpanded ? 16 : 0, y: vm.isExpanded ? 5 : 0)
         .contentShape(shape)
-        // Hover, SwiftUI `.onHover` ile DEĞİL (accessory app'te başka uygulama
-        // önplandayken event vermiyor); NotchHostingView'daki .activeAlways
-        // NSTrackingArea ile algılanıyor. Bkz NotchWindow.swift.
-        .onTapGesture {
-            vm.expand()
-        }
+        .offset(x: horizontalOffset)
+        .animation(Motion.standard, value: vm.activeRightAlertExtension)
         .onDrop(
             of: [UTType.fileURL, UTType.image, UTType.plainText],
             delegate: IslandDropDelegate(vm: vm, shelf: shelf)

@@ -50,16 +50,13 @@ final class NotchViewModel: ObservableObject {
     @Published var isDragHovering = false
     @Published var collapsedSize = CGSize(width: 196, height: 32)
 
-    /// Width of the right-side notification card attached next to the collapsed notch.
-    static let rightAlertWidth: CGFloat = 246
-    static let rightAlertGap: CGFloat = 8
+    /// Extra width added to the RIGHT side of the collapsed notch when an alert is active.
+    static let rightAlertExtensionWidth: CGFloat = 232
 
     var hasRightAlert: Bool { !notchAlerts.isEmpty && !isExpanded }
 
-    var rightAlertHeight: CGFloat {
-        let count = min(notchAlerts.count, 3)
-        guard count > 0 else { return 0 }
-        return CGFloat(count) * 62 + CGFloat(max(count - 1, 0)) * 6 + 14
+    var activeRightAlertExtension: CGFloat {
+        hasRightAlert ? Self.rightAlertExtensionWidth : 0
     }
 
     /// Set while the pointer sits inside the island so we can delay collapse.
