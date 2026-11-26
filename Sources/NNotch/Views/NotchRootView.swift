@@ -2,13 +2,128 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct NotchRootView: View {
+    @EnvironmentObject private var vm: NotchViewModel
+
     var body: some View {
-        VStack(spacing: 0) {
-            IslandView()
-            Spacer(minLength: 0)
+        ZStack(alignment: .top) {
+            VStack(spacing: 0) {
+                IslandView()
+                Spacer(minLength: 0)
+            }
+            if vm.hasRightAlert {
+                NotchRightAlertStack()
+                    .frame(width: NotchViewModel.rightAlertWidth)
+                    .offset(
+                        x: (vm.collapsedPillSize.width / 2) + NotchViewModel.rightAlertGap + (NotchViewModel.rightAlertWidth / 2),
+                        y: 4
+                    )
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
+    }
+}
+
+/// Compact notification cards anchored directly to the right side of the collapsed notch.
+private struct NotchRightAlertStack: View {
+    @EnvironmentObject private var vm: NotchViewModel
+    @EnvironmentObject private var reminders: ReminderStore
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(Array(vm.notchAlerts.prefix(3))) { alert in
+                NotchRightAlertCard(alert: alert) {
+                    if let remID = alert.reminderID, alert.isSticky {
+                        reminders.markCompleted(remID)
+                    }
+                    vm.dismissNotchAlert(id: alert.id)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct NotchRightAlertCard: View {
+    let alert: NotchAlertItem
+    let onDismiss: () -> Void
+
+    private var accent: Color { Color(hex: alert.colorHex) }
+
+    private var badgeText: String {
+        switch alert.stage {
+        case .upcoming15m:
+            return "En 15 min · \(alert.scheduledDate.formatted(date: .omitted, time: .shortened))"
+        case .dueNow:
+            return "Ahora · \(alert.scheduledDate.formatted(date: .omitted, time: .shortened))"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(accent)
+                .frame(width: 3, height: 34)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Image(systemName: alert.isSticky ? "bell.badge.fill" : "clock.badge.exclamationmark")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(accent)
+                    Text(badgeText)
+                        .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(accent)
+                        .lineLimit(1)
+                }
+                Text(alert.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 4) {
+                Button(action: onDismiss) {
+                    Image(systemName: alert.isSticky ? "checkmark" : "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(alert.isSticky ? accent.opacity(0.85) : Color.white.opacity(0.14)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(alert.isSticky ? "Listo / Sacar aviso" : "Cerrar aviso")
+                .accessibilityLabel("Cerrar aviso")
+
+                if let url = alert.meetingURL {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                        onDismiss()
+                    } label: {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(.cyan)
+                            .frame(width: 20, height: 18)
+                            .background(Capsule().fill(Color.cyan.opacity(0.16)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Unirse a la reunión")
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(height: 60)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(alert.isSticky ? accent.opacity(0.65) : Color.white.opacity(0.16), lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
     }
 }
 

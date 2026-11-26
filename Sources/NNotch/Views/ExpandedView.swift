@@ -43,6 +43,7 @@ struct ExpandedView: View {
         case .clipboard: ClipboardView()
         case .tools: ToolsView()
         case .calendar: CalendarTabView()
+        case .reminders: RemindersTabView()
         case .notes: NotesTabView()
         case .settings: SettingsQuickView()
         }

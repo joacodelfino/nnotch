@@ -72,6 +72,19 @@ struct CalendarLogicTests {
         check(emptyLedger.nextWake(events: [future], now: now.addingTimeInterval(-60),
                                    refresh: refresh, alertsEnabled: true) == future.startDate,
               "Clock moving backward preserves future event deadline")
+
+        // 15-minute pre-alert tests
+        let in15m = event("in15m", start: now.addingTimeInterval(15 * 60), end: now.addingTimeInterval(75 * 60))
+        var preLedger = CalendarAlertLedger()
+        check(preLedger.nextWake(events: [in15m], now: now.addingTimeInterval(-30), refresh: refresh,
+                                 alertsEnabled: true, includePreAlerts: true) == now,
+              "Pre-alert schedules wakeup 15 minutes before event start")
+        check(preLedger.takeUpcoming15m(events: [in15m], now: now).map(\.id) == ["in15m"],
+              "Pre-alert fires 15 minutes before start")
+        check(preLedger.takeUpcoming15m(events: [in15m], now: now.addingTimeInterval(5)).isEmpty,
+              "Pre-alert does not repeat")
+        check(preLedger.takeDue(events: [in15m], now: now.addingTimeInterval(15 * 60)).map(\.id) == ["in15m"],
+              "Exact start alert still fires after 15-minute pre-alert")
         print("Calendar checks passed: month grid, DST, overlapping dates and alert scheduling.")
     }
 }
