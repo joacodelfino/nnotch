@@ -37,9 +37,12 @@ final class MusicManager: ObservableObject {
     private var playbackGeneration = 0
     private var lastArtworkKey = ""
     private var artworkTask: URLSessionDataTask?
-    private let scriptQueue = DispatchQueue(label: "nnotch.music", qos: .utility)
+    private let scriptQueue = DispatchQueue(label: "nnotch.music.poll", qos: .utility)
+    /// Dedicated high-priority queue for user playback/seek/focus commands so a slow poll never delays clicks.
+    private let controlQueue = DispatchQueue(label: "nnotch.music.control", qos: .userInitiated)
     private let artworkCache = NSCache<NSString, NSImage>()
     nonisolated(unsafe) private static let ytMetaCache = NSCache<NSString, NSDictionary>()
+    private var ytMetaInFlight = Set<String>()
     private var seekGeneration = 0
     private var lastSeek: (trackKey: String, position: Double, generation: Int)?
     /// Evita que el drenaje del buffer de CoreAudio (~0.8s al pausar en Safari/Brave) pise el estado recién alternado.
@@ -366,6 +369,7 @@ final class MusicManager: ObservableObject {
                 }
                 self.applyPollInterval(active: final?.isPlaying == true)
                 self.refreshArtworkIfNeeded(for: final)
+                self.enrichYouTubeMetadataAsyncIfNeeded(for: final)
             }
         }
     }
@@ -494,19 +498,20 @@ final class MusicManager: ObservableObject {
                 jsMissing = true
             }
 
-            // Enriquecimiento automático para YouTube sin requerir JS (miniatura HD + canal vía oEmbed)
+            // Enriquecimiento automático para YouTube usando caché (sin bloquear el sondeo con red)
             if let ytID = extractYouTubeID(from: target.url) {
                 if artworkURL == nil {
                     artworkURL = "https://i.ytimg.com/vi/\(ytID)/hqdefault.jpg"
                 }
-                let meta = fetchYouTubeMeta(videoID: ytID)
-                let genericTitles = ["youtube", "youtube music", ""]
-                if genericTitles.contains(parsed.title.lowercased()), let realTitle = meta.title {
-                    parsed.title = realTitle
-                }
-                if parsed.artist.isEmpty || parsed.artist == siteName || parsed.artist == browser.shortName {
-                    if let author = meta.author {
-                        parsed.artist = author
+                if let meta = cachedYouTubeMeta(videoID: ytID) {
+                    let genericTitles = ["youtube", "youtube music", ""]
+                    if genericTitles.contains(parsed.title.lowercased()), let realTitle = meta.title {
+                        parsed.title = realTitle
+                    }
+                    if parsed.artist.isEmpty || parsed.artist == siteName || parsed.artist == browser.shortName {
+                        if let author = meta.author {
+                            parsed.artist = author
+                        }
                     }
                 }
             }
@@ -769,35 +774,57 @@ final class MusicManager: ObservableObject {
         return nil
     }
 
-    /// Obtiene título real y canal de un video de YouTube vía oEmbed público (con caché).
-    nonisolated private static func fetchYouTubeMeta(videoID: String) -> (author: String?, title: String?) {
-        let key = videoID as NSString
-        if let cached = ytMetaCache.object(forKey: key) {
-            let a = cached["author"] as? String ?? ""
-            let t = cached["title"] as? String ?? ""
-            return (a.isEmpty ? nil : a, t.isEmpty ? nil : t)
-        }
-        guard let oembedURL = URL(string: "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=\(videoID)&format=json") else {
-            return (nil, nil)
-        }
+    /// Lee metadatos cacheados de YouTube sin hacer llamadas síncronas de red.
+    nonisolated private static func cachedYouTubeMeta(videoID: String) -> (author: String?, title: String?)? {
+        guard let cached = ytMetaCache.object(forKey: videoID as NSString) else { return nil }
+        let a = cached["author"] as? String ?? ""
+        let t = cached["title"] as? String ?? ""
+        return (a.isEmpty ? nil : a, t.isEmpty ? nil : t)
+    }
+
+    /// Obtiene título real y canal de un video de YouTube vía oEmbed de forma 100% asíncrona.
+    private func enrichYouTubeMetadataAsyncIfNeeded(for playing: NowPlaying?) {
+        guard let playing, playing.isWeb,
+              let urlString = playing.webTabURL,
+              let ytID = Self.extractYouTubeID(from: urlString) else { return }
+        if Self.cachedYouTubeMeta(videoID: ytID) != nil || ytMetaInFlight.contains(ytID) { return }
+        guard let oembedURL = URL(string: "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=\(ytID)&format=json") else { return }
+
+        ytMetaInFlight.insert(ytID)
         var request = URLRequest(url: oembedURL)
-        request.timeoutInterval = 2.0
-        let sem = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var authorResult: String?
-        nonisolated(unsafe) var titleResult: String?
-        URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { sem.signal() }
-            guard let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            authorResult = json["author_name"] as? String
-            titleResult = json["title"] as? String
+        request.timeoutInterval = 2.5
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            var authorResult: String?
+            var titleResult: String?
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                authorResult = json["author_name"] as? String
+                titleResult = json["title"] as? String
+            }
+            Self.ytMetaCache.setObject(
+                ["author": authorResult ?? "", "title": titleResult ?? ""] as NSDictionary,
+                forKey: ytID as NSString
+            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.ytMetaInFlight.remove(ytID)
+                guard var current = self.nowPlaying,
+                      let currentURL = current.webTabURL,
+                      Self.extractYouTubeID(from: currentURL) == ytID else { return }
+                var changed = false
+                let genericTitles = ["youtube", "youtube music", ""]
+                if genericTitles.contains(current.title.lowercased()), let realTitle = titleResult, !realTitle.isEmpty {
+                    current.title = realTitle
+                    changed = true
+                }
+                if let author = authorResult, !author.isEmpty,
+                   (current.artist.isEmpty || current.artist == "YouTube" || current.artist == "YT Music" || current.sourceLabel.contains(current.artist)) {
+                    current.artist = author
+                    changed = true
+                }
+                if changed { self.nowPlaying = current }
+            }
         }.resume()
-        _ = sem.wait(timeout: .now() + 2.0)
-        ytMetaCache.setObject(
-            ["author": authorResult ?? "", "title": titleResult ?? ""] as NSDictionary,
-            forKey: key
-        )
-        return (authorResult, titleResult)
     }
 
     // MARK: - Browser JS Probe & Execution
@@ -1003,7 +1030,7 @@ final class MusicManager: ObservableObject {
            let wIdx = playing.webWindowIndex,
            let tIdx = playing.webTabIndex,
            let spec = Self.browsers.first(where: { $0.appName == appName }) {
-            scriptQueue.async {
+            controlQueue.async {
                 let script: String
                 switch spec.kind {
                 case .chromium:
@@ -1057,13 +1084,13 @@ final class MusicManager: ObservableObject {
               return 'missing';
             })()
             """
-            scriptQueue.async {
+            controlQueue.async {
                 _ = Self.executeTabJS(browser: spec, windowIndex: wIdx, tabIndex: tIdx, js: js)
             }
         } else if playing.bundleID == Self.spotifyBundleID || playing.bundleID == Self.musicBundleID {
             let app = playing.bundleID == Self.spotifyBundleID ? "Spotify" : "Music"
             let position = Int(targetSec)
-            scriptQueue.async {
+            controlQueue.async {
                 _ = Self.runScript("tell application \"\(app)\" to set player position to \(position)")
             }
         }
@@ -1090,7 +1117,7 @@ final class MusicManager: ObservableObject {
         if playing.isWeb {
             let previousURLFromHistory: String? = (playback == .previous) ? youtubeHistoryStack.popLast() : nil
             let recentIDs = visitedYouTubeIDs
-            scriptQueue.async { [weak self] in
+            controlQueue.async { [weak self] in
                 var handled = false
                 if let appName = playing.webBrowserApp,
                    let wIdx = playing.webWindowIndex,
@@ -1165,7 +1192,7 @@ final class MusicManager: ObservableObject {
 
         if playing.bundleID == Self.spotifyBundleID || playing.bundleID == Self.musicBundleID {
             let app = playing.bundleID == Self.spotifyBundleID ? "Spotify" : "Music"
-            scriptQueue.async { [weak self] in
+            controlQueue.async { [weak self] in
                 _ = Self.runScript("tell application \"\(app)\" to \(playback.appleScriptCommand)")
                 Task { @MainActor in self?.poll() }
             }

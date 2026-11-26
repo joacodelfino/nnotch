@@ -40,15 +40,17 @@ struct IslandView: View {
                         lineWidth: 1
                     )
                 )
-            // Keep the drop destination mounted while the silhouette animates.
-            // Removing it mid-drag can interrupt SwiftUI's drag session.
-            ExpandedView()
-                .frame(width: vm.expandedSize.width, height: vm.expandedSize.height)
-                .frame(width: islandWidth, height: islandHeight, alignment: .top)
-                .opacity(vm.isExpanded && vm.isContentVisible ? 1 : 0)
-                .allowsHitTesting(vm.isExpanded && vm.isContentVisible)
-                .accessibilityHidden(!vm.isExpanded || !vm.isContentVisible)
-                .animation(nil, value: vm.isContentVisible)
+            // Only mount ExpandedView while the island is expanded (or dragging over it)
+            // so SwiftUI does not retain offscreen tab hierarchies & backing stores while idle.
+            if vm.isExpanded || vm.isDragHovering {
+                ExpandedView()
+                    .frame(width: vm.expandedSize.width, height: vm.expandedSize.height)
+                    .frame(width: islandWidth, height: islandHeight, alignment: .top)
+                    .opacity(vm.isExpanded && vm.isContentVisible ? 1 : 0)
+                    .allowsHitTesting(vm.isExpanded && vm.isContentVisible)
+                    .accessibilityHidden(!vm.isExpanded || !vm.isContentVisible)
+                    .animation(nil, value: vm.isContentVisible)
+            }
             CollapsedView()
                 .frame(width: vm.collapsedPillSize.width, height: vm.collapsedPillSize.height)
                 .frame(width: islandWidth, height: islandHeight, alignment: .top)
