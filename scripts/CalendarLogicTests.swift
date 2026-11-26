@@ -50,6 +50,28 @@ struct CalendarLogicTests {
         check(restored.takeDue(events: [future], now: now.addingTimeInterval(30)).count == 1, "Alert at scheduled time")
         let moved = event("one", start: now.addingTimeInterval(60), end: now.addingTimeInterval(3600))
         check(restored.takeDue(events: [moved], now: now.addingTimeInterval(60)).count == 1, "Rescheduled event alerts again")
+
+        let refresh = now.addingTimeInterval(60)
+        let emptyLedger = CalendarAlertLedger()
+        check(emptyLedger.nextWake(events: [], now: now, refresh: refresh, alertsEnabled: true) == refresh,
+              "No events: one refresh wakeup instead of per-second polling")
+        check(emptyLedger.nextWake(events: [future], now: now, refresh: refresh, alertsEnabled: true) == future.startDate,
+              "Upcoming event wakes before refresh")
+        check(emptyLedger.nextWake(events: [future], now: now, refresh: refresh, alertsEnabled: false) == refresh,
+              "Disabled alerts only wake for refresh")
+        check(emptyLedger.nextWake(events: [old, ended, untimed], now: now, refresh: refresh, alertsEnabled: true) == refresh,
+              "Old, ended and all-day events must not create a busy loop")
+        check(ledger.nextWake(events: [one, two, future], now: now, refresh: refresh, alertsEnabled: true) == future.startDate,
+              "Delivered events are not rescheduled")
+        let recent = event("recent", start: now.addingTimeInterval(-20), end: refresh)
+        check(emptyLedger.nextWake(events: [recent], now: now, refresh: refresh, alertsEnabled: true) == now,
+              "Wake/resume catches up a recently started event")
+        check(emptyLedger.nextWake(events: [future], now: now.addingTimeInterval(120),
+                                   refresh: refresh, alertsEnabled: true) == now.addingTimeInterval(120),
+              "Clock moving forward refreshes immediately")
+        check(emptyLedger.nextWake(events: [future], now: now.addingTimeInterval(-60),
+                                   refresh: refresh, alertsEnabled: true) == future.startDate,
+              "Clock moving backward preserves future event deadline")
         print("Calendar checks passed: month grid, DST, overlapping dates and alert scheduling.")
     }
 }

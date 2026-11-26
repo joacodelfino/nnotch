@@ -42,13 +42,21 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var displayedMonth = CalendarLayout.monthStart(Date())
     @Published var selectedDate = CalendarLayout.calendar.startOfDay(for: Date())
     @Published var alertsEnabled = UserDefaults.standard.object(forKey: "calendar.alertsEnabled") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(alertsEnabled, forKey: "calendar.alertsEnabled") }
+        didSet {
+            UserDefaults.standard.set(alertsEnabled, forKey: "calendar.alertsEnabled")
+            scheduleNextWake()
+        }
     }
-    var onEventsStarting: (([CalendarEventItem]) -> Void)?
+    var onEventsStarting: (([CalendarEventItem]) -> Void)? {
+        didSet { scheduleNextWake() }
+    }
     private var alertLedger = CalendarAlertLedger(
         delivered: UserDefaults.standard.dictionary(forKey: "calendar.deliveredAlerts") as? [String: Double] ?? [:]
     )
-    private var timer: AnyCancellable?
+    private var timer: Timer?
+    private var moduleObserver: AnyCancellable?
+    private var moduleEnabled = false
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var nextRefresh = Date.distantPast
     private var externalTask: Task<Void, Never>?
 
@@ -75,7 +83,7 @@ final class CalendarManager: ObservableObject {
     }
 
     private func checkEventAlerts() {
-        guard alertsEnabled, Preferences.shared.isTabEnabled(.calendar), onEventsStarting != nil else { return }
+        guard alertsEnabled, moduleEnabled, onEventsStarting != nil else { return }
         let due = alertLedger.takeDue(events: allEvents, now: Date())
         guard !due.isEmpty else { return }
         UserDefaults.standard.set(alertLedger.delivered, forKey: "calendar.deliveredAlerts")
@@ -99,36 +107,66 @@ final class CalendarManager: ObservableObject {
         externalFeeds = Persistence.load([ExternalCalendarFeed].self, from: "calendar_feeds.json") ?? []
         loading = false
 
-        NotificationCenter.default.addObserver(
-            forName: .EKEventStoreChanged,
-            object: store,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.rebuildMacEvents() }
+        observe(.EKEventStoreChanged, object: store) { [weak self] in self?.rebuildMacEvents() }
+        observe(NSApplication.didBecomeActiveNotification) { [weak self] in self?.refresh() }
+        observe(NSWorkspace.didWakeNotification, center: NSWorkspace.shared.notificationCenter) { [weak self] in
+            self?.refresh()
         }
+        observe(.NSSystemClockDidChange) { [weak self] in self?.refresh() }
+        observe(.NSSystemTimeZoneDidChange) { [weak self] in self?.refresh() }
 
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
-        refresh()
-        timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-            .sink { [weak self] now in
+        moduleObserver = Preferences.shared.$enabledTabs
+            .map { $0.contains(IslandTab.calendar.rawValue) }
+            .removeDuplicates()
+            .sink { [weak self] enabled in
                 guard let self else { return }
-                if now >= self.nextRefresh {
-                    self.nextRefresh = now.addingTimeInterval(60)
+                self.moduleEnabled = enabled
+                if enabled {
                     self.refresh()
+                } else {
+                    self.timer?.invalidate()
+                    self.timer = nil
+                    self.externalTask?.cancel()
+                    self.externalTask = nil
+                    self.isSyncingExternal = false
                 }
-                self.checkEventAlerts()
             }
+    }
+
+    deinit {
+        timer?.invalidate()
+        externalTask?.cancel()
+        for (center, token) in observers { center.removeObserver(token) }
+    }
+
+    private func observe(_ name: Notification.Name, object: Any? = nil,
+                         center: NotificationCenter = .default, action: @escaping @MainActor () -> Void) {
+        let token = center.addObserver(forName: name, object: object, queue: .main) { _ in
+            Task { @MainActor in action() }
+        }
+        observers.append((center, token))
+    }
+
+    private func scheduleNextWake() {
+        timer?.invalidate()
+        timer = nil
+        guard moduleEnabled else { return }
+        let now = Date()
+        let fireDate = alertLedger.nextWake(events: allEvents, now: now, refresh: nextRefresh,
+                                           alertsEnabled: alertsEnabled && onEventsStarting != nil)
+        let timer = Timer(fire: max(fireDate, now.addingTimeInterval(0.01)), interval: 0, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.wake() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func wake() {
+        guard moduleEnabled else { return }
+        // Deliver cached events before potentially slow EventKit refresh work.
+        checkEventAlerts()
+        if Date() >= nextRefresh { refresh() }
+        scheduleNextWake()
     }
 
     /// Eventos filtrados según el origen elegido en la barra superior de Calendario.
@@ -274,6 +312,8 @@ final class CalendarManager: ObservableObject {
     // MARK: - Refresh & Merge
 
     func refresh() {
+        guard moduleEnabled else { return }
+        defer { scheduleNextWake() }
         nextRefresh = Date().addingTimeInterval(60)
         updateAccessFromSystem()
         rebuildMacEvents()
@@ -283,6 +323,7 @@ final class CalendarManager: ObservableObject {
     private var cachedMacEvents: [CalendarEventItem] = []
 
     private func rebuildMacEvents() {
+        guard moduleEnabled else { return }
         guard eventAccess == .granted else {
             if !macCalendars.isEmpty { macCalendars = [] }
             cachedMacEvents = []
@@ -348,6 +389,7 @@ final class CalendarManager: ObservableObject {
 
     func refreshExternalFeeds() {
         externalTask?.cancel()
+        guard moduleEnabled else { return }
         let activeFeeds = externalFeeds.filter(\.isEnabled)
         guard !activeFeeds.isEmpty else {
             cachedExternalEvents = []
@@ -363,6 +405,7 @@ final class CalendarManager: ObservableObject {
             var collected: [CalendarEventItem] = []
             var firstError: String?
             for feed in activeFeeds {
+                guard !Task.isCancelled else { return }
                 guard let url = URL(string: feed.urlString) else { continue }
                 do {
                     var req = URLRequest(url: url)
@@ -376,6 +419,7 @@ final class CalendarManager: ObservableObject {
                         collected.append(contentsOf: parsed)
                     }
                 } catch {
+                    guard !Task.isCancelled else { return }
                     firstError = "No se pudo sincronizar \(feed.name)"
                 }
             }
@@ -400,6 +444,7 @@ final class CalendarManager: ObservableObject {
             }
         }
         if allEvents != deduped { allEvents = deduped }
+        scheduleNextWake()
     }
 
     // MARK: - Meeting Link & ICS Parser

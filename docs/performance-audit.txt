@@ -108,3 +108,44 @@ en escenarios repetidos, dejando estabilizar caches. Las métricas CPU/RAM
 dentro de nnotch describen el sistema, no el consumo del propio proceso.
 Aún no hay una comparación A/B de footprint o latencia de la aplicación completa.
 La rama debe probarse antes de integrar a dev y luego main.
+
+Segunda iteración — calendario y portapapeles
+Implementada después de probar dd2f54c:
+- CalendarManager usa un único Timer no repetitivo: el próximo evento pendiente
+  o el refresh de 60 s. Sin eventos próximos pasa de 60 callbacks/minuto a
+  aproximadamente uno; con el módulo desactivado no programa timers ni inicia
+  consultas o descargas. Conserva la ventana de recuperación de avisos de 60 s.
+  Cambios de hora/zona, despertar, cambios EventKit, preferencias y nuevos feeds
+  recalculan el siguiente vencimiento. Retira observadores al destruirse.
+- Las claves de texto/link son SHA256 con prefijo por tipo. Migra el historial
+  existente conservando identificador, fecha y contenido; mantiene el esquema
+  JSON. Fixture de texto: 360.115 -> 180.186 bytes de JSON (aprox. 50% menos).
+  Esto no significa reducir a la mitad la RAM total de la aplicación.
+- Captura de imágenes: preserva los bytes PNG sin convertir a TIFF y de vuelta;
+  convierte TIFF en una cola serial con autoreleasepool. Como antes, la imagen
+  original conserva su resolución. La deduplicación de imágenes es por bytes
+  PNG; imágenes visualmente iguales con distinta codificación pueden tener
+  claves diferentes. No se reescriben los archivos históricos de imagen.
+- Hay una sola conversión en vuelo; mientras trabaja, los sondeos dejan para
+  después la lectura del clipboard. Al terminar se capturará su último estado.
+  El polling no garantiza capturar todos los cambios rápidos (tampoco lo hacía
+  la versión anterior). Vaciar, quitar, deshabilitar o volver a copiar invalida el
+  resultado pendiente para evitar reinserciones tardías.
+- La escritura del PNG comprimido sigue siendo síncrona/atómica; una falla no
+  inserta una referencia a un archivo inexistente. El trabajo pendiente no se
+  guarda si se cierra la aplicación antes de finalizar; no crea archivos
+  huérfanos por una finalización descartada. Copiar una imagen histórica hacia
+  otras aplicaciones conserva la publicación de tipos a través de NSImage.
+
+Pruebas añadidas
+Próxima alarma vs refresh, alertas apagadas, eventos vencidos/todo el día,
+eventos ya entregados, recuperación al despertar y saltos de reloj.
+Migración idempotente, recopia de texto migrado, separación de claves por tipo,
+round-trip JSON, PNG idéntico, TIFF a PNG con resolución original, datos
+inválidos y exclusión/invalidez de conversiones pendientes.
+
+Medición previa a esta segunda iteración
+El proceso dd2f54c informó 42,3 MiB de huella física (pico 43,4 MiB) con vmmap,
+y 90,9 MiB de RSS/0,1% CPU en una lectura de ps. Son métricas distintas y no
+constituyen una medición de la segunda iteración. La comparación A/B completa
+y las pruebas manuales de suspensión/avisos/drag siguen pendientes.

@@ -50,6 +50,17 @@ enum CalendarLayout {
 struct CalendarAlertLedger {
     var delivered: [String: Double] = [:]
 
+    /// Next useful wakeup: an undelivered event or the periodic refresh.
+    func nextWake(events: [CalendarEventItem], now: Date, refresh: Date, alertsEnabled: Bool) -> Date {
+        guard alertsEnabled else { return max(now, refresh) }
+        let nextEvent = events.lazy.filter { event in
+            !event.isAllDay && event.startDate > now.addingTimeInterval(-60)
+                && event.endDate >= now
+                && delivered["\(event.id)|\(event.startDate.timeIntervalSince1970)"] == nil
+        }.map(\.startDate).min()
+        return max(now, min(refresh, nextEvent ?? refresh))
+    }
+
     mutating func takeDue(events: [CalendarEventItem], now: Date) -> [CalendarEventItem] {
         delivered = delivered.filter { $0.value > now.addingTimeInterval(-172_800).timeIntervalSince1970 }
         var due: [CalendarEventItem] = []

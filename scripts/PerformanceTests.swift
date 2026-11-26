@@ -51,6 +51,43 @@ struct PerformanceTests {
         let small = ImageThumbnail.make(url: url, maxPixel: 128)!
         precondition(small.representations[0].pixelsWide == 128)
 
+
+        precondition(ClipboardContent.pngData(from: png, isPNG: true) == png, "PNG bytes must be preserved")
+        precondition(ClipboardContent.pngData(from: Data("invalid".utf8), isPNG: true) == nil)
+        precondition(ClipboardContent.pngData(from: Data("invalid".utf8), isPNG: false) == nil)
+        let converted = ClipboardContent.pngData(from: bitmap.tiffRepresentation!, isPNG: false)!
+        let convertedRep = NSBitmapImageRep(data: converted)!
+        precondition(convertedRep.pixelsWide == 4096 && convertedRep.pixelsHigh == 2048,
+                     "Clipboard originals must keep their full resolution")
+        let longText = String(repeating: "Texto largo 😀\n", count: 10_000)
+        let legacy = ClipboardItem(id: UUID(), date: Date(), kind: .text, value: longText, contentKey: "text:" + longText)
+        let migrated = ClipboardContent.migrated(legacy)
+        precondition(migrated.id == legacy.id && migrated.date == legacy.date && migrated.value == longText)
+        let link = ClipboardItem(id: UUID(), date: Date(), kind: .link, value: "https://example.com",
+                                 contentKey: "link:https://example.com")
+        let migratedLink = ClipboardContent.migrated(link)
+        precondition(migratedLink.value == link.value && migratedLink.id == link.id)
+        precondition(migratedLink.contentKey == ClipboardContent.key(kind: .link, value: link.value))
+        let imageItem = ClipboardItem(id: UUID(), date: Date(), kind: .image, value: "/tmp/image.png", contentKey: "image:legacy")
+        precondition(ClipboardContent.migrated(imageItem) == imageItem)
+        precondition(migrated.contentKey.count == 76, "Text key has constant size")
+        precondition(ClipboardContent.migrated(migrated) == migrated, "Migration is idempotent")
+        precondition(ClipboardContent.key(kind: .text, value: longText) == migrated.contentKey, "Recopy deduplicates migrated text")
+        precondition(ClipboardContent.key(kind: .link, value: longText) != migrated.contentKey)
+        let encodedLegacy = try JSONEncoder().encode(legacy).count
+        let encodedNew = try JSONEncoder().encode(migrated).count
+        precondition(encodedNew < encodedLegacy * 6 / 10)
+        let decoded = try JSONDecoder().decode(ClipboardItem.self, from: JSONEncoder().encode(migrated))
+        precondition(decoded == migrated, "New records retain the existing JSON schema")
+        var capture = ClipboardCaptureState()
+        let first = capture.begin()!
+        precondition(capture.begin() == nil, "No overlapping large-image conversions")
+        capture.invalidate()
+        precondition(!capture.finish(first), "Cleared or disabled captures cannot reappear")
+        let second = capture.begin()!
+        precondition(capture.finish(second), "New captures work after invalidation")
+        precondition(!capture.isProcessing)
+        print("Clipboard fixture JSON: \(encodedLegacy) -> \(encodedNew) bytes; full content preserved")
         let intervals = [DateInterval(start: Date(timeIntervalSince1970: 10), end: Date(timeIntervalSince1970: 20)),
                          DateInterval(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: 15))]
         let merged = CalendarLayout.mergedIntervals(intervals)

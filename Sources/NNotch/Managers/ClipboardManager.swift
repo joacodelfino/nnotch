@@ -1,24 +1,5 @@
 import AppKit
 import Combine
-import CryptoKit
-
-struct ClipboardItem: Identifiable, Codable, Equatable {
-    enum Kind: String, Codable {
-        case text, link, file, image
-    }
-
-    let id: UUID
-    let date: Date
-    let kind: Kind
-    /// Text content, link URL string, or file path depending on `kind`.
-    let value: String
-    /// Stable key used for de-duplication.
-    let contentKey: String
-
-    var fileURL: URL? {
-        kind == .file ? URL(fileURLWithPath: value) : nil
-    }
-}
 
 /// Watches the system pasteboard and keeps the last 20 copied items.
 /// Items can be re-copied back to the pasteboard at any time.
@@ -32,6 +13,8 @@ final class ClipboardManager: ObservableObject {
     private let pasteboard = NSPasteboard.general
     private var lastChangeCount: Int
     private var timer: Timer?
+    private let imageQueue = DispatchQueue(label: "nnotch.clipboard.images", qos: .utility)
+    private var capture = ClipboardCaptureState()
     private var limitObserver: AnyCancellable?
     private var tabObserver: AnyCancellable?
     private let imagesDir = Persistence.directory("ClipboardImages")
@@ -48,7 +31,9 @@ final class ClipboardManager: ObservableObject {
 
     init() {
         lastChangeCount = pasteboard.changeCount
-        items = Persistence.load([ClipboardItem].self, from: "clipboard.json") ?? []
+        let saved = Persistence.load([ClipboardItem].self, from: "clipboard.json") ?? []
+        items = saved.map(ClipboardContent.migrated)
+        if items != saved { persist() }
 
         // Gizlilik: pano izleme yalnızca Pano modülü açıkken çalışır. Modül
         // kapatıldığında arka planda kopyalananlar ne yakalanır ne diske yazılır.
@@ -74,9 +59,11 @@ final class ClipboardManager: ObservableObject {
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.poll() }
             }
+            timer.tolerance = 0.1
             RunLoop.main.add(timer, forMode: .common)
             self.timer = timer
         } else {
+            capture.invalidate()
             timer?.invalidate()
             timer = nil
         }
@@ -89,6 +76,7 @@ final class ClipboardManager: ObservableObject {
     }
 
     private func poll() {
+        guard !capture.isProcessing else { return }
         guard pasteboard.changeCount != lastChangeCount else { return }
         lastChangeCount = pasteboard.changeCount
 
@@ -103,34 +91,45 @@ final class ClipboardManager: ObservableObject {
             for url in Array(capturedURLs).reversed() {
                 add(kind: .file, value: url.path, contentKey: "file:\(url.path)")
             }
-        } else if types.contains(.tiff) || types.contains(.png),
-                  let image = NSImage(pasteboard: pasteboard) {
-            addImage(image)
+        } else if types.contains(.tiff) || types.contains(.png) {
+            if let png = pasteboard.data(forType: .png) {
+                addImage(data: png, isPNG: true)
+            } else if let tiff = pasteboard.data(forType: .tiff) {
+                addImage(data: tiff, isPNG: false)
+            }
         } else if let string = pasteboard.string(forType: .string),
                   !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://"),
                !trimmed.contains(" "), URL(string: trimmed) != nil {
-                add(kind: .link, value: trimmed, contentKey: "link:\(trimmed)")
+                add(kind: .link, value: trimmed, contentKey: ClipboardContent.key(kind: .link, value: trimmed))
             } else {
-                add(kind: .text, value: string, contentKey: "text:\(string)")
+                add(kind: .text, value: string, contentKey: ClipboardContent.key(kind: .text, value: string))
             }
         }
     }
 
-    private func addImage(_ image: NSImage) {
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]) else { return }
-        // İçerik özeti kararlı olmalı: Hasher process başına rastgele tohumlanır,
-        // bu yüzden SHA256 kullanıyoruz — dedup yeniden başlatmalar arası da çalışsın.
-        let digest = SHA256.hash(data: png)
-        let key = "image:" + digest.map { String(format: "%02x", $0) }.joined()
-        if moveExistingToFront(contentKey: key) { return }
-
-        let url = imagesDir.appendingPathComponent("\(UUID().uuidString).png")
-        try? png.write(to: url)
-        insert(ClipboardItem(id: UUID(), date: Date(), kind: .image, value: url.path, contentKey: key))
+    private func addImage(data: Data, isPNG: Bool) {
+        guard let token = capture.begin() else { return }
+        let capturedAt = Date()
+        imageQueue.async { [weak self] in
+            let result: (Data, String)? = autoreleasepool {
+                guard let png = ClipboardContent.pngData(from: data, isPNG: isPNG) else { return nil }
+                return (png, "image:" + ClipboardContent.digest(png))
+            }
+            Task { @MainActor [weak self] in
+                guard let self, self.capture.finish(token), let (png, key) = result else { return }
+                if self.moveExistingToFront(contentKey: key) { return }
+                let url = self.imagesDir.appendingPathComponent("\(UUID().uuidString).png")
+                do {
+                    try png.write(to: url, options: .atomic)
+                } catch {
+                    NSLog("Clipboard image write failed: \(error.localizedDescription)")
+                    return
+                }
+                self.insert(ClipboardItem(id: UUID(), date: capturedAt, kind: .image, value: url.path, contentKey: key))
+            }
+        }
     }
 
     private func add(kind: ClipboardItem.Kind, value: String, contentKey: String) {
@@ -175,17 +174,20 @@ final class ClipboardManager: ObservableObject {
         }
         // Our own write bumps changeCount; swallow it so the item isn't re-captured,
         // but move it to the front like a fresh copy.
+        capture.invalidate()
         lastChangeCount = pasteboard.changeCount
         _ = moveExistingToFront(contentKey: item.contentKey)
     }
 
     func remove(_ item: ClipboardItem) {
+        capture.invalidate()
         items.removeAll { $0.id == item.id }
         cleanupStorage(for: item)
         persist()
     }
 
     func clearAll() {
+        capture.invalidate()
         for item in items { cleanupStorage(for: item) }
         items.removeAll()
         persist()
