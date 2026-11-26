@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let notes = NotesStore()
     let shortcuts = AppShortcutsStore()
     let calendar = CalendarManager()
+    let reminders = ReminderStore()
 
     private var windowController: NotchWindowController?
     private var floatingShelf: FloatingShelfController?
@@ -39,9 +40,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environmentObject(notes)
             .environmentObject(shortcuts)
             .environmentObject(calendar)
+            .environmentObject(reminders)
         windowController = NotchWindowController(viewModel: viewModel, rootView: root)
         calendar.onEventsStarting = { [weak self] events in
             self?.viewModel.showCalendarAlerts(events)
+        }
+        calendar.onEventsUpcoming15m = { [weak self] events in
+            self?.viewModel.showUpcomingCalendarAlerts(events)
+        }
+        reminders.onAlertsTriggered = { [weak self] alerts in
+            self?.viewModel.showNotchAlerts(alerts)
+        }
+        timers.onAlarmTriggered = { [weak self] _, _ in
+            guard let self else { return }
+            self.viewModel.expand(tab: .tools)
         }
         floatingShelf = FloatingShelfController(shelf: shelf)
         setupStatusItem()

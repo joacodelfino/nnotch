@@ -54,14 +54,19 @@ final class NotchPanel: NSPanel {
 final class NotchHostingView: NSHostingView<AnyView> {
     /// Adanın pencere (content) koordinatındaki dikdörtgenini veren closure.
     var islandRect: (() -> CGRect)?
+    /// Optional right-side alert banner rect in window coordinates.
+    var alertRect: (() -> CGRect?)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let rect = islandRect?() else { return super.hitTest(point) }
         let local = convert(point, from: superview)
+        if let alert = alertRect?(), alert.contains(local) {
+            return super.hitTest(point)
+        }
+        guard let rect = islandRect?() else { return super.hitTest(point) }
         return rect.contains(local) ? super.hitTest(point) : nil
     }
 }
@@ -86,34 +91,31 @@ final class NotchWindowController {
         hosting.islandRect = { [weak hosting, weak viewModel] in
             guard let hosting, let vm = viewModel else { return .zero }
             let b = hosting.bounds
-            let iw = vm.isExpanded ? vm.expandedSize.width : vm.collapsedPillSize.width
+            let iw = vm.isExpanded ? vm.expandedSize.width : (vm.collapsedPillSize.width + vm.activeRightAlertExtension)
             let ih = vm.isExpanded ? vm.expandedSize.height : vm.collapsedPillSize.height
-            // Ada, büyük pencerenin üst-ortasında hizalı. isFlipped'de üst kenar
-            // y=0, değilse y=height; iki durumu da doğru ele al.
             let top = hosting.isFlipped ? 0 : (b.height - ih)
-            return CGRect(x: (b.width - iw) / 2, y: top, width: iw, height: ih)
+            // Keep the left edge and physical notch anchored; only extend to the right when an alert is showing.
+            let baseLeft = vm.isExpanded ? (b.width - iw) / 2 : (b.width - vm.collapsedPillSize.width) / 2
+            return CGRect(x: baseLeft, y: top, width: iw, height: ih)
         }
+        hosting.alertRect = nil
         panel.contentView = hosting
         applyFrame()
         panel.orderFrontRegardless()
 
         // TEK hover kaynağı (NotchDrop tarzı, en dayanıklı): global + local
-        // mouseMoved monitörü + ekran-koordinatında ada rect testi. Accessory
-        // app'te, key olmayan panelde, başka uygulama önplandayken de çalışır
-        // (gerçek fareyle kanıtlandı); izin gerektirmez.
-        // Panel gizliyken (orderOut) frame bayat/zero kalır — hoverRect o durumda
-        // ekranda "hayalet" bir bölge üretir; görünürlük şartı bunu keser.
+        // mouseMoved monitörü + ekran-koordinatında ada rect testi.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.panel.isVisible else { return }
-                self.updateHover(inside: self.hoverRect().contains(NSEvent.mouseLocation))
+                self.updateHover(at: NSEvent.mouseLocation)
             }
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
             if let self {
                 MainActor.assumeIsolated {
                     guard self.panel.isVisible else { return }
-                    self.updateHover(inside: self.hoverRect().contains(NSEvent.mouseLocation))
+                    self.updateHover(at: NSEvent.mouseLocation)
                 }
             }
             return event
@@ -137,18 +139,17 @@ final class NotchWindowController {
             Task { @MainActor in self?.applyFrame() }
         }
 
-        viewModel.$isExpanded
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard let self, self.panel.isVisible else { return }
-                let inside = self.hoverRect().contains(NSEvent.mouseLocation)
-                self.panel.ignoresMouseEvents = !inside
-                if !inside {
-                    self.hoverInside = false
-                    self.viewModel.isMouseInside = false
-                }
-            }
-            .store(in: &cancellables)
+        Publishers.Merge(
+            viewModel.$isExpanded.map { _ in () },
+            viewModel.$notchAlerts.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            guard let self, self.panel.isVisible else { return }
+            self.applyFrame()
+            self.updateHover(at: NSEvent.mouseLocation)
+        }
+        .store(in: &cancellables)
     }
 
     deinit {
@@ -178,12 +179,31 @@ final class NotchWindowController {
         )
     }
 
+    private func rightAlertScreenRect() -> CGRect? {
+        guard viewModel.hasRightAlert else { return nil }
+        let wf = panel.frame
+        let pillHalf = viewModel.collapsedPillSize.width / 2
+        let extW = viewModel.activeRightAlertExtension
+        let ih = viewModel.collapsedPillSize.height
+        return CGRect(
+            x: wf.midX + pillHalf,
+            y: wf.maxY - ih - 8,
+            width: extW + 12,
+            height: ih + 14
+        )
+    }
+
     /// Tek giriş noktası; her iki kaynak da buraya besler. Sadece durum
     /// değişiminde aksiyon alır — mouseMoved seli aç/kapa döngüsü yaratmaz.
-    private func updateHover(inside: Bool) {
-        if panel.ignoresMouseEvents != !inside {
-            panel.ignoresMouseEvents = !inside
+    private func updateHover(at location: NSPoint) {
+        let insideIsland = hoverRect().contains(location)
+        let insideAlert = rightAlertScreenRect()?.contains(location) ?? false
+        let shouldAcceptMouse = insideIsland || insideAlert
+        if panel.ignoresMouseEvents != !shouldAcceptMouse {
+            panel.ignoresMouseEvents = !shouldAcceptMouse
         }
+        // Hovering the right-side alert banner lets the user click dismiss/join without expanding the full panel.
+        let inside = insideIsland
         guard inside != hoverInside else { return }
         hoverInside = inside
         viewModel.isMouseInside = inside
@@ -215,7 +235,8 @@ final class NotchWindowController {
         viewModel.refreshGeometry()
 
         let expanded = viewModel.expandedSize
-        let width = max(expanded.width, viewModel.collapsedPillSize.width) + 60
+        let alertSpan = viewModel.collapsedPillSize.width + 2 * (NotchViewModel.rightAlertExtensionWidth + 12)
+        let width = max(expanded.width, viewModel.collapsedPillSize.width, alertSpan) + 60
         let height = expanded.height + 40
         var frame = screen.topAnchoredRect(width: width, height: height)
         let scale = screen.backingScaleFactor
@@ -223,7 +244,8 @@ final class NotchWindowController {
         if panel.frame != frame {
             panel.setFrame(frame, display: true)
         }
-        let pointerInside = hoverRect().contains(NSEvent.mouseLocation)
+        let loc = NSEvent.mouseLocation
+        let pointerInside = hoverRect().contains(loc) || (rightAlertScreenRect()?.contains(loc) ?? false)
         panel.ignoresMouseEvents = !pointerInside
         if !panel.isVisible {
             panel.orderFrontRegardless()

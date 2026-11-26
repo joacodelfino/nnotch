@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 enum IslandTab: String, CaseIterable, Identifiable {
-    case home, shelf, clipboard, tools, calendar, notes, settings
+    case home, shelf, clipboard, tools, calendar, reminders, notes, settings
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum IslandTab: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.clipboard.fill"
         case .tools: return "timer"
         case .calendar: return "calendar"
+        case .reminders: return "bell.badge.fill"
         case .notes: return "note.text"
         case .settings: return "gearshape.fill"
         }
@@ -26,6 +27,7 @@ enum IslandTab: String, CaseIterable, Identifiable {
         case .clipboard: return "Portapapeles"
         case .tools: return "Herramientas"
         case .calendar: return "Calendario"
+        case .reminders: return "Recordatorios"
         case .notes: return "Notas"
         case .settings: return "Ajustes"
         }
@@ -41,10 +43,21 @@ final class NotchViewModel: ObservableObject {
     @Published var isContentVisible = false
     @Published var activeTab: IslandTab = .home
     @Published private(set) var calendarAlerts: [CalendarEventItem] = []
+    @Published private(set) var notchAlerts: [NotchAlertItem] = []
     private var alertDismissWork: DispatchWorkItem?
+    private var preAlertDismissWorks: [String: DispatchWorkItem] = [:]
     private var expandedForAlert = false
     @Published var isDragHovering = false
     @Published var collapsedSize = CGSize(width: 196, height: 32)
+
+    /// Extra width added to the RIGHT side of the collapsed notch when an alert is active.
+    static let rightAlertExtensionWidth: CGFloat = 232
+
+    var hasRightAlert: Bool { !notchAlerts.isEmpty && !isExpanded }
+
+    var activeRightAlertExtension: CGFloat {
+        hasRightAlert ? Self.rightAlertExtensionWidth : 0
+    }
 
     /// Set while the pointer sits inside the island so we can delay collapse.
     /// Hiçbir view okumadığı için yayınlanmaz (her mouse hareketinde
@@ -61,15 +74,92 @@ final class NotchViewModel: ObservableObject {
 
     private var collapseWorkItem: DispatchWorkItem?
 
+    func showNotchAlerts(_ items: [NotchAlertItem]) {
+        guard !items.isEmpty else { return }
+        var addedSticky = false
+        var addedPre = false
+
+        withAnimation(Motion.standard) {
+            for item in items {
+                // If an event/reminder upgrades from 15m pre-alert to dueNow, replace the old entry.
+                if let remID = item.reminderID {
+                    notchAlerts.removeAll { $0.reminderID == remID }
+                }
+                notchAlerts.removeAll { $0.id == item.id }
+                notchAlerts.insert(item, at: 0)
+
+                preAlertDismissWorks[item.id]?.cancel()
+                preAlertDismissWorks.removeValue(forKey: item.id)
+
+                if item.isSticky {
+                    addedSticky = true
+                } else {
+                    addedPre = true
+                    let alertID = item.id
+                    let work = DispatchWorkItem { [weak self] in
+                        self?.dismissNotchAlert(id: alertID)
+                    }
+                    preAlertDismissWorks[alertID] = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 14, execute: work)
+                }
+            }
+        }
+
+        if addedSticky {
+            NSSound(named: "Glass")?.play()
+            Preferences.shared.performHaptic(.levelChange)
+        } else if addedPre {
+            NSSound(named: "Pop")?.play()
+            Preferences.shared.performHaptic(.generic)
+        }
+    }
+
+    func dismissNotchAlert(id: String) {
+        preAlertDismissWorks[id]?.cancel()
+        preAlertDismissWorks.removeValue(forKey: id)
+        withAnimation(Motion.quick) {
+            notchAlerts.removeAll { $0.id == id }
+        }
+    }
+
+    func dismissAllNotchAlerts() {
+        for work in preAlertDismissWorks.values { work.cancel() }
+        preAlertDismissWorks.removeAll()
+        withAnimation(Motion.quick) {
+            notchAlerts = []
+        }
+    }
+
     func showCalendarAlerts(_ events: [CalendarEventItem]) {
-        guard !events.isEmpty else { return }
-        if calendarAlerts.isEmpty { expandedForAlert = !isExpanded }
-        calendarAlerts.append(contentsOf: events.filter { event in !calendarAlerts.contains(where: { $0.id == event.id }) })
-        expand()
-        alertDismissWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.dismissCalendarAlerts() }
-        alertDismissWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
+        let items = events.map { ev in
+            NotchAlertItem(
+                id: "cal-due-\(ev.id)",
+                title: ev.title,
+                scheduledDate: ev.startDate,
+                stage: .dueNow,
+                colorHex: ev.colorHex,
+                sourceLabel: ev.sourceLabel,
+                meetingURL: ev.meetingURL,
+                reminderID: nil
+            )
+        }
+        showNotchAlerts(items)
+    }
+
+    func showUpcomingCalendarAlerts(_ events: [CalendarEventItem]) {
+        let items = events.map { ev in
+            NotchAlertItem(
+                id: "cal-15m-\(ev.id)",
+                title: ev.title,
+                scheduledDate: ev.startDate,
+                stage: .upcoming15m,
+                colorHex: ev.colorHex,
+                sourceLabel: ev.sourceLabel,
+                meetingURL: ev.meetingURL,
+                reminderID: nil
+            )
+        }
+        showNotchAlerts(items)
     }
 
     func dismissCalendarAlerts(keepOpen: Bool = false) {

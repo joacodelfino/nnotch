@@ -189,7 +189,15 @@ final class Preferences: ObservableObject {
         let savedLimit = defaults.object(forKey: key("clipboardLimit")) as? Int ?? 20
         clipboardLimit = Self.clipboardLimitOptions.contains(savedLimit) ? savedLimit : 20
         if let raw = defaults.string(forKey: key("enabledTabs")) {
-            enabledTabs = Set(raw.split(separator: ",").map(String.init))
+            var tabs = Set(raw.split(separator: ",").map(String.init))
+            // Auto-enable the new Reminders tab once for existing users upgrading from older versions.
+            let migratedRemindersKey = "pref.migrated.remindersTab"
+            if !defaults.bool(forKey: migratedRemindersKey) {
+                tabs.insert(IslandTab.reminders.rawValue)
+                defaults.set(true, forKey: migratedRemindersKey)
+                defaults.set(Array(tabs).joined(separator: ","), forKey: key("enabledTabs"))
+            }
+            enabledTabs = tabs
         } else {
             enabledTabs = Set(IslandTab.allCases.map(\.rawValue))
         }

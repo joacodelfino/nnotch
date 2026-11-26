@@ -48,17 +48,28 @@ enum CalendarLayout {
 
 /// Pure scheduling logic, independent of timers and the UI.
 struct CalendarAlertLedger {
+    static let leadTime: TimeInterval = 15 * 60
     var delivered: [String: Double] = [:]
 
-    /// Next useful wakeup: an undelivered event or the periodic refresh.
-    func nextWake(events: [CalendarEventItem], now: Date, refresh: Date, alertsEnabled: Bool) -> Date {
+    /// Next useful wakeup: an undelivered event (start time or optional 15m pre-alert) or the periodic refresh.
+    func nextWake(events: [CalendarEventItem], now: Date, refresh: Date, alertsEnabled: Bool, includePreAlerts: Bool = false) -> Date {
         guard alertsEnabled else { return max(now, refresh) }
-        let nextEvent = events.lazy.filter { event in
-            !event.isAllDay && event.startDate > now.addingTimeInterval(-60)
-                && event.endDate >= now
-                && delivered["\(event.id)|\(event.startDate.timeIntervalSince1970)"] == nil
-        }.map(\.startDate).min()
-        return max(now, min(refresh, nextEvent ?? refresh))
+        var candidates: [Date] = []
+        for event in events {
+            guard !event.isAllDay, event.endDate >= now else { continue }
+            let dueKey = "\(event.id)|\(event.startDate.timeIntervalSince1970)"
+            if event.startDate > now.addingTimeInterval(-60), delivered[dueKey] == nil {
+                candidates.append(event.startDate)
+            }
+            if includePreAlerts {
+                let preTime = event.startDate.addingTimeInterval(-Self.leadTime)
+                let preKey = "pre15|\(event.id)|\(event.startDate.timeIntervalSince1970)"
+                if preTime > now.addingTimeInterval(-60), event.startDate > now, delivered[preKey] == nil {
+                    candidates.append(preTime)
+                }
+            }
+        }
+        return max(now, min(refresh, candidates.min() ?? refresh))
     }
 
     mutating func takeDue(events: [CalendarEventItem], now: Date) -> [CalendarEventItem] {
@@ -75,5 +86,22 @@ struct CalendarAlertLedger {
             due.append(event)
         }
         return due
+    }
+
+    mutating func takeUpcoming15m(events: [CalendarEventItem], now: Date) -> [CalendarEventItem] {
+        delivered = delivered.filter { $0.value > now.addingTimeInterval(-172_800).timeIntervalSince1970 }
+        var upcoming: [CalendarEventItem] = []
+        for event in events.sorted(by: { $0.startDate < $1.startDate }) {
+            let preTime = event.startDate.addingTimeInterval(-Self.leadTime)
+            let key = "pre15|\(event.id)|\(event.startDate.timeIntervalSince1970)"
+            guard !event.isAllDay,
+                  preTime <= now,
+                  preTime > now.addingTimeInterval(-60),
+                  event.startDate > now,
+                  delivered[key] == nil else { continue }
+            delivered[key] = event.startDate.timeIntervalSince1970
+            upcoming.append(event)
+        }
+        return upcoming
     }
 }

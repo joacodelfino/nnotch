@@ -12,6 +12,85 @@ struct NotchRootView: View {
     }
 }
 
+/// Inline alert strip seamlessly extending the right side of the collapsed notch.
+private struct NotchInlineRightAlert: View {
+    @EnvironmentObject private var vm: NotchViewModel
+    @EnvironmentObject private var reminders: ReminderStore
+
+    var body: some View {
+        if let alert = vm.notchAlerts.first {
+            let accent = Color(hex: alert.colorHex)
+            let extraCount = max(vm.notchAlerts.count - 1, 0)
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: 1, height: 14)
+
+                Circle()
+                    .fill(accent)
+                    .frame(width: 6, height: 6)
+
+                Text(alert.stage == .upcoming15m ? "15m" : "Ahora")
+                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                    .foregroundStyle(accent)
+
+                Text(alert.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if extraCount > 0 {
+                    Text("+\(extraCount)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+
+                if let url = alert.meetingURL {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                        dismiss(alert)
+                    } label: {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.cyan)
+                            .frame(width: 18, height: 18)
+                            .background(Circle().fill(Color.cyan.opacity(0.18)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Unirse a la reunión")
+                }
+
+                Button {
+                    dismiss(alert)
+                } label: {
+                    Image(systemName: alert.isSticky ? "checkmark" : "xmark")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(alert.isSticky ? accent.opacity(0.85) : Color.white.opacity(0.16)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(alert.isSticky ? "Listo / Sacar aviso" : "Cerrar aviso")
+                .accessibilityLabel("Cerrar aviso")
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 10)
+            .frame(width: NotchViewModel.rightAlertExtensionWidth, height: vm.collapsedPillSize.height)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private func dismiss(_ alert: NotchAlertItem) {
+        if let remID = alert.reminderID, alert.isSticky {
+            reminders.markCompleted(remID)
+        }
+        vm.dismissNotchAlert(id: alert.id)
+    }
+}
+
 /// The black island itself: notch-sized when collapsed, a full panel when expanded.
 struct IslandView: View {
     @EnvironmentObject private var vm: NotchViewModel
@@ -23,11 +102,16 @@ struct IslandView: View {
     }
 
     private var islandWidth: CGFloat {
-        vm.isExpanded ? vm.expandedSize.width : vm.collapsedPillSize.width
+        vm.isExpanded ? vm.expandedSize.width : (vm.collapsedPillSize.width + vm.activeRightAlertExtension)
     }
 
     private var islandHeight: CGFloat {
         vm.isExpanded ? vm.expandedSize.height : vm.collapsedPillSize.height
+    }
+
+    /// Shift half of the right alert extension to the right so the physical notch stays perfectly centered.
+    private var horizontalOffset: CGFloat {
+        vm.isExpanded ? 0 : (vm.activeRightAlertExtension / 2)
     }
 
     var body: some View {
@@ -40,21 +124,33 @@ struct IslandView: View {
                         lineWidth: 1
                     )
                 )
-            // Keep the drop destination mounted while the silhouette animates.
-            // Removing it mid-drag can interrupt SwiftUI's drag session.
-            ExpandedView()
-                .frame(width: vm.expandedSize.width, height: vm.expandedSize.height)
-                .frame(width: islandWidth, height: islandHeight, alignment: .top)
-                .opacity(vm.isExpanded && vm.isContentVisible ? 1 : 0)
-                .allowsHitTesting(vm.isExpanded && vm.isContentVisible)
-                .accessibilityHidden(!vm.isExpanded || !vm.isContentVisible)
-                .animation(nil, value: vm.isContentVisible)
-            CollapsedView()
-                .frame(width: vm.collapsedPillSize.width, height: vm.collapsedPillSize.height)
-                .frame(width: islandWidth, height: islandHeight, alignment: .top)
-                .opacity(vm.isExpanded ? 0 : 1)
-                .allowsHitTesting(!vm.isExpanded)
-                .accessibilityHidden(vm.isExpanded)
+            // Only mount ExpandedView while the island is expanded (or dragging over it)
+            // so SwiftUI does not retain offscreen tab hierarchies & backing stores while idle.
+            if vm.isExpanded || vm.isDragHovering {
+                ExpandedView()
+                    .frame(width: vm.expandedSize.width, height: vm.expandedSize.height)
+                    .frame(width: islandWidth, height: islandHeight, alignment: .top)
+                    .opacity(vm.isExpanded && vm.isContentVisible ? 1 : 0)
+                    .allowsHitTesting(vm.isExpanded && vm.isContentVisible)
+                    .accessibilityHidden(!vm.isExpanded || !vm.isContentVisible)
+                    .animation(nil, value: vm.isContentVisible)
+            }
+            HStack(spacing: 0) {
+                CollapsedView()
+                    .frame(width: vm.collapsedPillSize.width, height: vm.collapsedPillSize.height)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        vm.expand()
+                    }
+                if vm.hasRightAlert {
+                    NotchInlineRightAlert()
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+            }
+            .frame(width: islandWidth, height: islandHeight, alignment: .topLeading)
+            .opacity(vm.isExpanded ? 0 : 1)
+            .allowsHitTesting(!vm.isExpanded)
+            .accessibilityHidden(vm.isExpanded)
 
         }
         .frame(width: islandWidth, height: islandHeight)
@@ -62,12 +158,8 @@ struct IslandView: View {
         .shadow(color: .black.opacity(vm.isExpanded ? 0.5 : 0),
                 radius: vm.isExpanded ? 16 : 0, y: vm.isExpanded ? 5 : 0)
         .contentShape(shape)
-        // Hover, SwiftUI `.onHover` ile DEĞİL (accessory app'te başka uygulama
-        // önplandayken event vermiyor); NotchHostingView'daki .activeAlways
-        // NSTrackingArea ile algılanıyor. Bkz NotchWindow.swift.
-        .onTapGesture {
-            vm.expand()
-        }
+        .offset(x: horizontalOffset)
+        .animation(Motion.standard, value: vm.activeRightAlertExtension)
         .onDrop(
             of: [UTType.fileURL, UTType.image, UTType.plainText],
             delegate: IslandDropDelegate(vm: vm, shelf: shelf)

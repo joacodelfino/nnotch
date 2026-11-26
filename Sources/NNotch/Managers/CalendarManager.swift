@@ -21,6 +21,7 @@ final class CalendarManager: ObservableObject {
     @Published var selectedProvider: CalendarProvider {
         didSet {
             UserDefaults.standard.set(selectedProvider.rawValue, forKey: "calendar.selectedProvider")
+            rebuildDayIndex()
         }
     }
 
@@ -48,6 +49,9 @@ final class CalendarManager: ObservableObject {
         }
     }
     var onEventsStarting: (([CalendarEventItem]) -> Void)? {
+        didSet { scheduleNextWake() }
+    }
+    var onEventsUpcoming15m: (([CalendarEventItem]) -> Void)? {
         didSet { scheduleNextWake() }
     }
     private var alertLedger = CalendarAlertLedger(
@@ -83,11 +87,14 @@ final class CalendarManager: ObservableObject {
     }
 
     private func checkEventAlerts() {
-        guard alertsEnabled, moduleEnabled, onEventsStarting != nil else { return }
-        let due = alertLedger.takeDue(events: allEvents, now: Date())
-        guard !due.isEmpty else { return }
+        guard alertsEnabled, moduleEnabled, (onEventsStarting != nil || onEventsUpcoming15m != nil) else { return }
+        let now = Date()
+        let upcoming = onEventsUpcoming15m != nil ? alertLedger.takeUpcoming15m(events: allEvents, now: now) : []
+        let due = onEventsStarting != nil ? alertLedger.takeDue(events: allEvents, now: now) : []
+        guard !upcoming.isEmpty || !due.isEmpty else { return }
         UserDefaults.standard.set(alertLedger.delivered, forKey: "calendar.deliveredAlerts")
-        onEventsStarting?(due)
+        if !upcoming.isEmpty { onEventsUpcoming15m?(upcoming) }
+        if !due.isEmpty { onEventsStarting?(due) }
     }
 
     private var cachedExternalEvents: [CalendarEventItem] = []
@@ -152,8 +159,13 @@ final class CalendarManager: ObservableObject {
         timer = nil
         guard moduleEnabled else { return }
         let now = Date()
-        let fireDate = alertLedger.nextWake(events: allEvents, now: now, refresh: nextRefresh,
-                                           alertsEnabled: alertsEnabled && onEventsStarting != nil)
+        let fireDate = alertLedger.nextWake(
+            events: allEvents,
+            now: now,
+            refresh: nextRefresh,
+            alertsEnabled: alertsEnabled && (onEventsStarting != nil || onEventsUpcoming15m != nil),
+            includePreAlerts: onEventsUpcoming15m != nil
+        )
         let timer = Timer(fire: max(fireDate, now.addingTimeInterval(0.01)), interval: 0, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.wake() }
         }
@@ -181,6 +193,39 @@ final class CalendarManager: ObservableObject {
         case .custom:
             return allEvents.filter { $0.provider == .custom }
         }
+    }
+
+    /// Pre-indexed map from start-of-day to events for O(1) lookup across the 42-cell month grid.
+    private var dayEventsIndex: [Date: [CalendarEventItem]] = [:]
+
+    func events(on day: Date) -> [CalendarEventItem] {
+        dayEventsIndex[CalendarLayout.calendar.startOfDay(for: day)] ?? []
+    }
+
+    private func rebuildDayIndex() {
+        let cal = CalendarLayout.calendar
+        let days = CalendarLayout.days(in: displayedMonth)
+        var index: [Date: [CalendarEventItem]] = [:]
+        let filtered = filteredEvents
+        for day in days {
+            let start = cal.startOfDay(for: day)
+            let matching = filtered.filter { CalendarLayout.occurs($0, on: start) }
+            if !matching.isEmpty {
+                index[start] = matching.sorted { a, b in
+                    a.isAllDay != b.isAllDay ? a.isAllDay : a.startDate < b.startDate
+                }
+            }
+        }
+        let selectedStart = cal.startOfDay(for: selectedDate)
+        if index[selectedStart] == nil {
+            let matching = filtered.filter { CalendarLayout.occurs($0, on: selectedStart) }
+            if !matching.isEmpty {
+                index[selectedStart] = matching.sorted { a, b in
+                    a.isAllDay != b.isAllDay ? a.isAllDay : a.startDate < b.startDate
+                }
+            }
+        }
+        dayEventsIndex = index
     }
 
     var hasGoogleSourceConfigured: Bool {
@@ -444,6 +489,7 @@ final class CalendarManager: ObservableObject {
             }
         }
         if allEvents != deduped { allEvents = deduped }
+        rebuildDayIndex()
         scheduleNextWake()
     }
 
