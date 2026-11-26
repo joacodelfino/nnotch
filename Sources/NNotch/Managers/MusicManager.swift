@@ -34,6 +34,7 @@ final class MusicManager: ObservableObject {
 
     private var timer: Timer?
     private var pollInFlight = false
+    private var playbackGeneration = 0
     private var lastArtworkKey = ""
     private let scriptQueue = DispatchQueue(label: "nnotch.music", qos: .utility)
     private let artworkCache = NSCache<NSString, NSImage>()
@@ -230,6 +231,7 @@ final class MusicManager: ObservableObject {
         guard !pollInFlight else { return }
         pollInFlight = true
         let startGen = seekGeneration
+        let playbackGen = playbackGeneration
 
         scriptQueue.async { [weak self] in
             Self.sawAutomationDenied = false
@@ -313,6 +315,10 @@ final class MusicManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.pollInFlight = false
+                guard playbackGen == self.playbackGeneration else {
+                    self.poll()
+                    return
+                }
                 self.automationDenied = denied
 
                 var final = chosen
@@ -464,8 +470,9 @@ final class MusicManager: ObservableObject {
                 let fields = jsRaw.components(separatedBy: "|~|")
                 if fields.count >= 6 {
                     let domPlaying = fields[0] == "1"
-                    // Si CoreAudio o el DOM reportan reproducción activa
-                    playing = domPlaying || isOutputtingAudio
+                    // El estado de la pestaña prevalece: CoreAudio puede seguir activo
+                    // después de pausar o corresponder a otra pestaña.
+                    playing = domPlaying
                     position = Double(fields[1]) ?? 0
                     duration = Double(fields[2]) ?? 0
                     let msTitle = fields[3].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1059,6 +1066,7 @@ final class MusicManager: ObservableObject {
             return
         }
 
+        playbackGeneration += 1
         if playback == .playPause {
             let newState = !playing.isPlaying
             nowPlaying?.isPlaying = newState
