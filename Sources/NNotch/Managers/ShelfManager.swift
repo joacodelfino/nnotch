@@ -161,6 +161,21 @@ final class ShelfManager: ObservableObject {
         persist()
     }
 
+    /// Clears the shelf UI/state immediately while deferring on-disk deletion of the backing
+    /// copies so destination apps like Finder finish copying without error -8072.
+    func clearAfterExternalDrop(cleanupDelay: TimeInterval = 15) {
+        let dirs = items.map { $0.storedURL.deletingLastPathComponent() }
+        selectedIDs.removeAll()
+        items.removeAll()
+        persist()
+        guard !dirs.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + cleanupDelay) {
+            for dir in dirs {
+                try? FileManager.default.removeItem(at: dir)
+            }
+        }
+    }
+
     func icon(for item: ShelfItem) -> NSImage {
         NSWorkspace.shared.icon(forFile: item.storedPath)
     }

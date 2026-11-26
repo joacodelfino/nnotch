@@ -129,7 +129,7 @@ private struct FloatingShelfView: View {
                 emptyState
             } else {
                 DropoverStackView(items: shelf.items) {
-                    shelf.removeAll()
+                    shelf.clearAfterExternalDrop()
                     onClose()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
