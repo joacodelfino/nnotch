@@ -7,8 +7,7 @@ struct CalendarMonthView: View {
     private let weekdays = ["L", "M", "X", "J", "V", "S", "D"]
 
     private var dayEvents: [CalendarEventItem] {
-        calendar.filteredEvents.filter { CalendarLayout.occurs($0, on: calendar.selectedDate) }
-            .sorted { a, b in a.isAllDay != b.isAllDay ? a.isAllDay : a.startDate < b.startDate }
+        calendar.events(on: calendar.selectedDate)
     }
 
     var body: some View {
@@ -101,7 +100,7 @@ struct CalendarMonthView: View {
         let selected = cal.isDate(date, inSameDayAs: calendar.selectedDate)
         let today = cal.isDateInToday(date)
         let inMonth = cal.isDate(date, equalTo: calendar.displayedMonth, toGranularity: .month)
-        let events = calendar.filteredEvents.filter { CalendarLayout.occurs($0, on: date) }
+        let events = calendar.events(on: date)
         return Button { calendar.selectDay(date) } label: {
             VStack(spacing: 4) {
                 Text("\(cal.component(.day, from: date))")

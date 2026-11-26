@@ -21,7 +21,7 @@ final class FloatingShelfController {
         itemsObserver = shelf.$items.dropFirst().sink { [weak self] items in
             guard let self else { return }
             if items.isEmpty {
-                self.panel?.orderOut(nil)
+                self.releasePanel()
             } else {
                 self.dismissWork?.cancel()
                 self.dismissWork = nil
@@ -42,13 +42,20 @@ final class FloatingShelfController {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         globalMonitor = nil
         localMonitor = nil
-        panel?.orderOut(nil)
+        releasePanel()
     }
 
     func hide() {
         dismissWork?.cancel()
         dismissWork = nil
-        panel?.orderOut(nil)
+        releasePanel()
+    }
+
+    private func releasePanel() {
+        guard let existing = panel else { return }
+        existing.orderOut(nil)
+        existing.contentView = nil
+        panel = nil
     }
 
     private func handle(_ event: NSEvent) {
@@ -57,7 +64,7 @@ final class FloatingShelfController {
                 dismissWork?.cancel()
                 itemCountAtDragStart = shelf.items.count
             } else if event.type == .leftMouseUp, triggered, itemCountAtDragStart == 0, shelf.items.isEmpty {
-                let work = DispatchWorkItem { [weak self] in self?.panel?.orderOut(nil) }
+                let work = DispatchWorkItem { [weak self] in self?.releasePanel() }
                 dismissWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
             }

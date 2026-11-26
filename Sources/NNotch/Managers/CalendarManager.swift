@@ -21,6 +21,7 @@ final class CalendarManager: ObservableObject {
     @Published var selectedProvider: CalendarProvider {
         didSet {
             UserDefaults.standard.set(selectedProvider.rawValue, forKey: "calendar.selectedProvider")
+            rebuildDayIndex()
         }
     }
 
@@ -181,6 +182,39 @@ final class CalendarManager: ObservableObject {
         case .custom:
             return allEvents.filter { $0.provider == .custom }
         }
+    }
+
+    /// Pre-indexed map from start-of-day to events for O(1) lookup across the 42-cell month grid.
+    private var dayEventsIndex: [Date: [CalendarEventItem]] = [:]
+
+    func events(on day: Date) -> [CalendarEventItem] {
+        dayEventsIndex[CalendarLayout.calendar.startOfDay(for: day)] ?? []
+    }
+
+    private func rebuildDayIndex() {
+        let cal = CalendarLayout.calendar
+        let days = CalendarLayout.days(in: displayedMonth)
+        var index: [Date: [CalendarEventItem]] = [:]
+        let filtered = filteredEvents
+        for day in days {
+            let start = cal.startOfDay(for: day)
+            let matching = filtered.filter { CalendarLayout.occurs($0, on: start) }
+            if !matching.isEmpty {
+                index[start] = matching.sorted { a, b in
+                    a.isAllDay != b.isAllDay ? a.isAllDay : a.startDate < b.startDate
+                }
+            }
+        }
+        let selectedStart = cal.startOfDay(for: selectedDate)
+        if index[selectedStart] == nil {
+            let matching = filtered.filter { CalendarLayout.occurs($0, on: selectedStart) }
+            if !matching.isEmpty {
+                index[selectedStart] = matching.sorted { a, b in
+                    a.isAllDay != b.isAllDay ? a.isAllDay : a.startDate < b.startDate
+                }
+            }
+        }
+        dayEventsIndex = index
     }
 
     var hasGoogleSourceConfigured: Bool {
@@ -444,6 +478,7 @@ final class CalendarManager: ObservableObject {
             }
         }
         if allEvents != deduped { allEvents = deduped }
+        rebuildDayIndex()
         scheduleNextWake()
     }
 

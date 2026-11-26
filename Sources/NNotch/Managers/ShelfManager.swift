@@ -26,6 +26,8 @@ final class ShelfManager: ObservableObject {
     }
 
     private let shelfDir = Persistence.directory("Shelf")
+    private let ioQueue = DispatchQueue(label: "nnotch.shelf.io", qos: .userInitiated)
+    private var clearGeneration = 0
 
     init() {
         let saved = Persistence.load([ShelfItem].self, from: "shelf.json") ?? []
@@ -38,50 +40,93 @@ final class ShelfManager: ObservableObject {
 
     func add(fileURL: URL) {
         let id = UUID()
+        let fileName = fileURL.lastPathComponent
         let itemDir = shelfDir.appendingPathComponent(id.uuidString, isDirectory: true)
-        let target = itemDir.appendingPathComponent(fileURL.lastPathComponent)
-        do {
-            try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: fileURL, to: target)
-        } catch {
-            NSLog("Shelf copy failed: \(error.localizedDescription)")
-            return
+        let target = itemDir.appendingPathComponent(fileName)
+        let gen = clearGeneration
+
+        ioQueue.async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: fileURL, to: target)
+            } catch {
+                NSLog("Shelf copy failed: \(error.localizedDescription)")
+                try? FileManager.default.removeItem(at: itemDir)
+                return
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.clearGeneration == gen else {
+                    self.ioQueue.async { try? FileManager.default.removeItem(at: itemDir) }
+                    return
+                }
+                self.items.insert(
+                    ShelfItem(id: id, date: Date(), fileName: fileName, storedPath: target.path),
+                    at: 0
+                )
+                self.persist()
+            }
         }
-        items.insert(
-            ShelfItem(id: id, date: Date(), fileName: fileURL.lastPathComponent, storedPath: target.path),
-            at: 0
-        )
-        persist()
     }
 
     func add(imageData: Data, suggestedName: String = "Imagen") {
         let id = UUID()
+        let fileName = "\(suggestedName)-\(shortStamp()).png"
         let itemDir = shelfDir.appendingPathComponent(id.uuidString, isDirectory: true)
-        let target = itemDir.appendingPathComponent("\(suggestedName)-\(shortStamp()).png")
-        do {
-            try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
-            try imageData.write(to: target)
-        } catch { return }
-        items.insert(
-            ShelfItem(id: id, date: Date(), fileName: target.lastPathComponent, storedPath: target.path),
-            at: 0
-        )
-        persist()
+        let target = itemDir.appendingPathComponent(fileName)
+        let gen = clearGeneration
+
+        ioQueue.async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
+                try imageData.write(to: target, options: .atomic)
+            } catch {
+                try? FileManager.default.removeItem(at: itemDir)
+                return
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.clearGeneration == gen else {
+                    self.ioQueue.async { try? FileManager.default.removeItem(at: itemDir) }
+                    return
+                }
+                self.items.insert(
+                    ShelfItem(id: id, date: Date(), fileName: fileName, storedPath: target.path),
+                    at: 0
+                )
+                self.persist()
+            }
+        }
     }
 
     func add(text: String) {
         let id = UUID()
+        let fileName = "Nota-\(shortStamp()).txt"
         let itemDir = shelfDir.appendingPathComponent(id.uuidString, isDirectory: true)
-        let target = itemDir.appendingPathComponent("Nota-\(shortStamp()).txt")
-        do {
-            try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
-            try text.write(to: target, atomically: true, encoding: .utf8)
-        } catch { return }
-        items.insert(
-            ShelfItem(id: id, date: Date(), fileName: target.lastPathComponent, storedPath: target.path),
-            at: 0
-        )
-        persist()
+        let target = itemDir.appendingPathComponent(fileName)
+        let gen = clearGeneration
+
+        ioQueue.async { [weak self] in
+            do {
+                try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
+                try text.write(to: target, atomically: true, encoding: .utf8)
+            } catch {
+                try? FileManager.default.removeItem(at: itemDir)
+                return
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.clearGeneration == gen else {
+                    self.ioQueue.async { try? FileManager.default.removeItem(at: itemDir) }
+                    return
+                }
+                self.items.insert(
+                    ShelfItem(id: id, date: Date(), fileName: fileName, storedPath: target.path),
+                    at: 0
+                )
+                self.persist()
+            }
+        }
     }
 
     /// Entry point for drops coming from SwiftUI `onDrop` providers.
@@ -148,28 +193,35 @@ final class ShelfManager: ObservableObject {
     func remove(_ item: ShelfItem) {
         selectedIDs.remove(item.id)
         items.removeAll { $0.id == item.id }
-        try? FileManager.default.removeItem(at: item.storedURL.deletingLastPathComponent())
+        let dir = item.storedURL.deletingLastPathComponent()
+        ioQueue.async { try? FileManager.default.removeItem(at: dir) }
         persist()
     }
 
     func removeAll() {
-        selectedIDs.removeAll()
-        for item in items {
-            try? FileManager.default.removeItem(at: item.storedURL.deletingLastPathComponent())
-        }
-        items.removeAll()
-        persist()
-    }
-
-    /// Clears the shelf UI/state immediately while deferring on-disk deletion of the backing
-    /// copies so destination apps like Finder finish copying without error -8072.
-    func clearAfterExternalDrop(cleanupDelay: TimeInterval = 15) {
+        clearGeneration += 1
         let dirs = items.map { $0.storedURL.deletingLastPathComponent() }
         selectedIDs.removeAll()
         items.removeAll()
         persist()
         guard !dirs.isEmpty else { return }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + cleanupDelay) {
+        ioQueue.async {
+            for dir in dirs {
+                try? FileManager.default.removeItem(at: dir)
+            }
+        }
+    }
+
+    /// Clears the shelf UI/state immediately while deferring on-disk deletion of the backing
+    /// copies so destination apps like Finder finish copying without error -8072.
+    func clearAfterExternalDrop(cleanupDelay: TimeInterval = 15) {
+        clearGeneration += 1
+        let dirs = items.map { $0.storedURL.deletingLastPathComponent() }
+        selectedIDs.removeAll()
+        items.removeAll()
+        persist()
+        guard !dirs.isEmpty else { return }
+        ioQueue.asyncAfter(deadline: .now() + cleanupDelay) {
             for dir in dirs {
                 try? FileManager.default.removeItem(at: dir)
             }
