@@ -51,6 +51,9 @@ final class CalendarManager: ObservableObject {
     var onEventsStarting: (([CalendarEventItem]) -> Void)? {
         didSet { scheduleNextWake() }
     }
+    var onEventsUpcoming15m: (([CalendarEventItem]) -> Void)? {
+        didSet { scheduleNextWake() }
+    }
     private var alertLedger = CalendarAlertLedger(
         delivered: UserDefaults.standard.dictionary(forKey: "calendar.deliveredAlerts") as? [String: Double] ?? [:]
     )
@@ -84,11 +87,14 @@ final class CalendarManager: ObservableObject {
     }
 
     private func checkEventAlerts() {
-        guard alertsEnabled, moduleEnabled, onEventsStarting != nil else { return }
-        let due = alertLedger.takeDue(events: allEvents, now: Date())
-        guard !due.isEmpty else { return }
+        guard alertsEnabled, moduleEnabled, (onEventsStarting != nil || onEventsUpcoming15m != nil) else { return }
+        let now = Date()
+        let upcoming = onEventsUpcoming15m != nil ? alertLedger.takeUpcoming15m(events: allEvents, now: now) : []
+        let due = onEventsStarting != nil ? alertLedger.takeDue(events: allEvents, now: now) : []
+        guard !upcoming.isEmpty || !due.isEmpty else { return }
         UserDefaults.standard.set(alertLedger.delivered, forKey: "calendar.deliveredAlerts")
-        onEventsStarting?(due)
+        if !upcoming.isEmpty { onEventsUpcoming15m?(upcoming) }
+        if !due.isEmpty { onEventsStarting?(due) }
     }
 
     private var cachedExternalEvents: [CalendarEventItem] = []
@@ -153,8 +159,13 @@ final class CalendarManager: ObservableObject {
         timer = nil
         guard moduleEnabled else { return }
         let now = Date()
-        let fireDate = alertLedger.nextWake(events: allEvents, now: now, refresh: nextRefresh,
-                                           alertsEnabled: alertsEnabled && onEventsStarting != nil)
+        let fireDate = alertLedger.nextWake(
+            events: allEvents,
+            now: now,
+            refresh: nextRefresh,
+            alertsEnabled: alertsEnabled && (onEventsStarting != nil || onEventsUpcoming15m != nil),
+            includePreAlerts: onEventsUpcoming15m != nil
+        )
         let timer = Timer(fire: max(fireDate, now.addingTimeInterval(0.01)), interval: 0, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.wake() }
         }
