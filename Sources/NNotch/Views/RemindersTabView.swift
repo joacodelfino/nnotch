@@ -1,19 +1,39 @@
 import SwiftUI
 
-/// Dedicated tab for personal reminders with 2-stage notch alerts (15m before + sticky at exact time).
+/// Dedicated tab for short personal reminders (up to 12 hours ahead) with 2-stage notch alerts
+/// (15m pre-alert + sticky alert at the exact scheduled time).
 struct RemindersTabView: View {
     @EnvironmentObject private var reminders: ReminderStore
     @EnvironmentObject private var vm: NotchViewModel
     @EnvironmentObject private var prefs: Preferences
 
     @State private var title = ""
-    @State private var scheduledDate = RemindersTabView.defaultDate()
+    /// Offset from now in minutes (5 min ... 12 hours = 720 min).
+    @State private var offsetMinutes: Double = 30
 
-    private static func defaultDate() -> Date {
-        let cal = Calendar.current
-        let next = cal.date(byAdding: .minute, value: 30, to: Date()) ?? Date()
-        let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: next)
-        return cal.date(from: comps) ?? next
+    private let minMinutes: Double = 5
+    private let maxMinutes: Double = 12 * 60
+    private let quickPresets: [(label: String, minutes: Double)] = [
+        ("15m", 15),
+        ("30m", 30),
+        ("1h", 60),
+        ("2h", 120),
+        ("4h", 240),
+        ("8h", 480),
+        ("12h", 720),
+    ]
+
+    private var targetDate: Date {
+        Date().addingTimeInterval(offsetMinutes * 60)
+    }
+
+    private var relativeLabel: String {
+        let total = Int(offsetMinutes.rounded())
+        let h = total / 60
+        let m = total % 60
+        if h == 0 { return "en \(m) min" }
+        if m == 0 { return "en \(h) h" }
+        return "en \(h) h \(m) min"
     }
 
     private var pendingCount: Int {
@@ -27,7 +47,7 @@ struct RemindersTabView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             composerColumn
-                .frame(width: 245)
+                .frame(width: 256)
 
             Divider().overlay(Color.white.opacity(0.08))
 
@@ -43,31 +63,23 @@ struct RemindersTabView: View {
         VStack(alignment: .leading, spacing: 8) {
             CardTitle("Nuevo recordatorio", symbol: "bell.badge.fill", tint: .orange)
 
-            TextField("Ej: Mandar informe, llamar…", text: $title)
+            TextField("¿Qué te recuerdo?", text: $title)
                 .textFieldStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
                 .onSubmit { submit() }
 
-            DatePicker(
-                "Hora",
-                selection: $scheduledDate,
-                displayedComponents: [.date, .hourAndMinute]
-            )
-            .datePickerStyle(.compact)
-            .labelsHidden()
-            .controlSize(.small)
-            .environment(\.locale, Locale(identifier: "es_UY"))
-
-            HStack(spacing: 4) {
-                quickTimeChip("+20m") { scheduledDate = Date().addingTimeInterval(20 * 60) }
-                quickTimeChip("+1h") { scheduledDate = Date().addingTimeInterval(60 * 60) }
-                quickTimeChip("+3h") { scheduledDate = Date().addingTimeInterval(3 * 60 * 60) }
-                Spacer(minLength: 0)
-            }
+            timeSelectorCard
 
             Button {
                 submit()
@@ -75,26 +87,27 @@ struct RemindersTabView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Agregar recordatorio")
+                    Text("Programar aviso")
                         .font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(.black)
+                .foregroundStyle(title.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.45) : Color.black)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8).fill(title.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.15) : Color.orange))
+                .padding(.vertical, 6.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(title.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.1) : Color.orange)
+                )
             }
             .buttonStyle(.plain)
             .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
 
-            Text("Avisa 15 min antes al costado derecho del notch y vuelve fijo a la hora exacta hasta que lo saques.")
-                .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.45))
-                .fixedSize(horizontal: false, vertical: true)
-
             Spacer(minLength: 0)
 
             HStack(spacing: 6) {
-                Button("Probar 15m") {
+                Text("Probar:")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.35))
+                Button("15 min antes") {
                     vm.collapseNow()
                     vm.showNotchAlerts([
                         NotchAlertItem(
@@ -115,7 +128,7 @@ struct RemindersTabView: View {
 
                 Text("·").foregroundStyle(.white.opacity(0.25))
 
-                Button("Probar fijo") {
+                Button("A la hora (fijo)") {
                     vm.collapseNow()
                     vm.showNotchAlerts([
                         NotchAlertItem(
@@ -137,24 +150,84 @@ struct RemindersTabView: View {
         }
     }
 
-    private func quickTimeChip(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.75))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.white.opacity(0.08)))
+    private var timeSelectorCard: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                adjustButton(symbol: "minus", label: "Restar 5 minutos") {
+                    offsetMinutes = max(minMinutes, offsetMinutes - 5)
+                }
+
+                VStack(spacing: 1) {
+                    Text(targetDate.formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 24, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(.white)
+                    Text(relativeLabel)
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.orange)
+                }
+                .frame(maxWidth: .infinity)
+
+                adjustButton(symbol: "plus", label: "Sumar 5 minutos") {
+                    offsetMinutes = min(maxMinutes, offsetMinutes + 5)
+                }
+            }
+
+            Slider(value: $offsetMinutes, in: minMinutes...maxMinutes, step: 5)
+                .tint(.orange)
+                .controlSize(.mini)
+
+            HStack(spacing: 4) {
+                ForEach(quickPresets, id: \.label) { preset in
+                    let active = Int(offsetMinutes.rounded()) == Int(preset.minutes)
+                    Button {
+                        withAnimation(Motion.quick) {
+                            offsetMinutes = preset.minutes
+                        }
+                    } label: {
+                        Text(preset.label)
+                            .font(.system(size: 9, weight: active ? .bold : .medium).monospacedDigit())
+                            .foregroundStyle(active ? Color.black : Color.white.opacity(0.7))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 3.5)
+                            .background(
+                                Capsule().fill(active ? Color.orange : Color.white.opacity(0.07))
+                            )
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
-        .buttonStyle(.plain)
+        .padding(9)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+
+    private func adjustButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.white.opacity(0.1)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(IslandButtonStyle())
+        .accessibilityLabel(label)
     }
 
     private func submit() {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        reminders.add(title: trimmed, date: scheduledDate)
+        reminders.add(title: trimmed, date: targetDate)
         title = ""
-        scheduledDate = Self.defaultDate()
+        offsetMinutes = 30
     }
 
     // MARK: - Right: List
@@ -183,7 +256,7 @@ struct RemindersTabView: View {
                     Text("Sin recordatorios pendientes")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white.opacity(0.5))
-                    Text("Creá uno con fecha y hora para recibir el aviso al lado derecho del notch")
+                    Text("Elegí un lapso de hasta 12 h para recibir aviso 15 min antes y fijo a la hora exacta")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.32))
                         .multilineTextAlignment(.center)
@@ -222,11 +295,11 @@ struct RemindersTabView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 5) {
-                    Text(item.scheduledDate.formatted(.dateTime.day().month(.abbreviated).hour().minute().locale(Locale(identifier: "es_UY"))))
-                        .font(.system(size: 9.5).monospacedDigit())
-                        .foregroundStyle(isPast ? .red.opacity(0.85) : .white.opacity(0.5))
+                    Text(item.scheduledDate.formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(isPast ? .red.opacity(0.85) : .orange.opacity(0.9))
                     if isPast {
-                        Text("Vencido")
+                        Text("· Vencido")
                             .font(.system(size: 8.5, weight: .semibold))
                             .foregroundStyle(.red)
                     }
