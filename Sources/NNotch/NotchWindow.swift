@@ -91,21 +91,14 @@ final class NotchWindowController {
         hosting.islandRect = { [weak hosting, weak viewModel] in
             guard let hosting, let vm = viewModel else { return .zero }
             let b = hosting.bounds
-            let iw = vm.isExpanded ? vm.expandedSize.width : vm.collapsedPillSize.width
+            let iw = vm.isExpanded ? vm.expandedSize.width : (vm.collapsedPillSize.width + vm.activeRightAlertExtension)
             let ih = vm.isExpanded ? vm.expandedSize.height : vm.collapsedPillSize.height
             let top = hosting.isFlipped ? 0 : (b.height - ih)
-            return CGRect(x: (b.width - iw) / 2, y: top, width: iw, height: ih)
+            // Keep the left edge and physical notch anchored; only extend to the right when an alert is showing.
+            let baseLeft = vm.isExpanded ? (b.width - iw) / 2 : (b.width - vm.collapsedPillSize.width) / 2
+            return CGRect(x: baseLeft, y: top, width: iw, height: ih)
         }
-        hosting.alertRect = { [weak hosting, weak viewModel] in
-            guard let hosting, let vm = viewModel, vm.hasRightAlert else { return nil }
-            let b = hosting.bounds
-            let pillRight = (b.width + vm.collapsedPillSize.width) / 2
-            let aw = NotchViewModel.rightAlertWidth
-            let ah = vm.rightAlertHeight
-            let x = pillRight + NotchViewModel.rightAlertGap
-            let y = hosting.isFlipped ? 4 : (b.height - ah - 4)
-            return CGRect(x: x, y: y, width: aw, height: ah)
-        }
+        hosting.alertRect = nil
         panel.contentView = hosting
         applyFrame()
         panel.orderFrontRegardless()
@@ -190,13 +183,13 @@ final class NotchWindowController {
         guard viewModel.hasRightAlert else { return nil }
         let wf = panel.frame
         let pillHalf = viewModel.collapsedPillSize.width / 2
-        let aw = NotchViewModel.rightAlertWidth
-        let ah = viewModel.rightAlertHeight
+        let extW = viewModel.activeRightAlertExtension
+        let ih = viewModel.collapsedPillSize.height
         return CGRect(
-            x: wf.midX + pillHalf + NotchViewModel.rightAlertGap - 6,
-            y: wf.maxY - ah - 10,
-            width: aw + 12,
-            height: ah + 14
+            x: wf.midX + pillHalf,
+            y: wf.maxY - ih - 8,
+            width: extW + 12,
+            height: ih + 14
         )
     }
 
@@ -242,9 +235,9 @@ final class NotchWindowController {
         viewModel.refreshGeometry()
 
         let expanded = viewModel.expandedSize
-        let alertSpan = viewModel.collapsedPillSize.width + 2 * (NotchViewModel.rightAlertGap + NotchViewModel.rightAlertWidth + 12)
+        let alertSpan = viewModel.collapsedPillSize.width + 2 * (NotchViewModel.rightAlertExtensionWidth + 12)
         let width = max(expanded.width, viewModel.collapsedPillSize.width, alertSpan) + 60
-        let height = max(expanded.height, viewModel.rightAlertHeight + 20) + 40
+        let height = expanded.height + 40
         var frame = screen.topAnchoredRect(width: width, height: height)
         let scale = screen.backingScaleFactor
         frame.origin.x = (frame.origin.x * scale).rounded() / scale
