@@ -1,0 +1,110 @@
+Auditoría de rendimiento de nnotch — 2026-11-26
+Base: 9bcb639 (main). Rama: perf/lower-idle-cpu-and-memory.
+
+Alcance
+Revisión estática de gestores, vistas SwiftUI, ventanas/AppKit, soporte,
+persistencia, preferencias y scripts de compilación/pruebas.
+El build ya usa -O y -whole-module-optimization; no agrega dependencias.
+Esta revisión no equivale a una medición de CPU/RAM de la aplicación completa.
+
+Cambios implementados
+1. TimerCenter: elimina el Timer de 0,5 s cuando todos los contadores están
+   detenidos. Antes: 120 callbacks/minuto en reposo; ahora: ninguno de este
+   gestor. Mantiene la cadencia activa y el comportamiento de tiempo de pared.
+   Liquida el tiempo transcurrido antes de iniciar/pausar/resetear un contador
+   para no descontar tiempo de los otros contadores simultáneos.
+2. MusicManager: miniaturas ImageIO de hasta 640 px, decodificadas fuera del
+   hilo principal; caché de 12 imágenes con coste objetivo de 12 MiB.
+   NSCache tiene límites orientativos, no un límite estricto de RSS.
+   Cancela descargas de carátulas anteriores al cambiar de pista.
+   Sin reproducción activa, consulta cada 4 s en lugar de cada 1,5 s
+   (62,5% menos consultas periódicas en pausa). Refresh/controles siguen
+   solicitando actualizaciones inmediatas. La detección de reanudación externa
+   puede tardar hasta el siguiente sondeo, además del tiempo de AppleScript.
+   No publica de nuevo NowPlaying/permisos si sus valores no cambiaron.
+3. EqualizerBars: tarea cancelable que solo avanza cuando playing es true.
+   Los ecualizadores del notch cerrado y del reproductor dejan de animarse
+   cuando están ocultos. Se conserva la vista previa animada en Ajustes.
+4. AppDelegate/SystemStats: CPU y RAM solo se leen con Inicio/Herramientas
+   abiertos o con un indicador CPU/RAM visible en el notch cerrado.
+   Batería no publica valores idénticos; los timers permiten cierta tolerancia.
+   Red conserva el muestreo en todas las pestañas porque aparece en la cabecera.
+5. ExpandedHeader: observa red/batería por separado para no invalidar la
+   estructura completa de la pestaña cada vez que llega una muestra.
+6. ClipboardView: lee y reduce imágenes desde URL en un worker; evita cargar
+   todo el archivo en Data y decodificar en el hilo principal. Comprueba la
+   cancelación antes de instalar el resultado. El texto de vista previa se
+   limita a 512 caracteres; el contenido guardado/copiado permanece completo.
+   ClipboardManager descarta trabajo sobre archivos que excederían el límite
+   del historial y evita reescribir el historial al copiar el primer elemento.
+7. CalendarManager: combina intervalos solapados (mes visible + hoy/mañana),
+   evita publicar calendarios/eventos idénticos y el refresh redundante al
+   segundo del inicio. Parseo ICS fuera del actor principal. Conserva las
+   consultas de fechas separadas cuando se navega a meses lejanos.
+8. NotesTabView: listas lazy para no construir todas las filas de notas/links.
+
+Evidencia reproducible
+- bash build-app.sh: compilación release y firma ad-hoc.
+- bash scripts/test-calendar.sh: grilla mensual, DST, solapamientos y avisos.
+- bash scripts/test-performance.sh: ciclo de vida del timer, contadores
+  simultáneos, pausa/reanudación, límites de imágenes, datos inválidos y unión
+  de intervalos.
+- Fixture de imagen RGBA 4096x2048: 33.554.432 bytes de píxeles originales
+  frente a 819.200 bytes a 640x320 (97,6% menos). Es una comparación del
+  buffer de píxeles, no una reducción medida de la RAM total del proceso.
+- git diff --check.
+
+Hallazgos para la siguiente iteración, ordenados por impacto probable
+A. ShelfManager.add/copyItem y remove/removeAll hacen I/O síncrono en main.
+   Los archivos grandes o discos externos pueden congelar la interfaz.
+   Conviene una cola serial con estado de operaciones, cancelación al vaciar
+   y drenaje al salir. No basta con envolver copyItem en Task: seguiría en
+   MainActor y/o introduciría carreras al borrar/salir.
+B. ClipboardManager convierte imágenes TIFF -> bitmap -> PNG en main.
+   Capturas grandes pueden causar picos de memoria y pausas. Moverlo a una
+   cola serial necesita preservar el orden del historial, no reinsertar tras
+   vaciar/deshabilitar y mantener deduplicación entre versiones.
+C. MusicManager enumera pestañas de todos los navegadores en cada sondeo.
+   AppleScript y esperas síncronas de oEmbed comparten una cola, por lo que
+   una respuesta lenta retrasa controles. Conviene separar enriquecimiento
+   asíncrono y detección; no omitir navegadores arbitrariamente porque se
+   perdería la detección universal. Las esperas con timeout y variables
+   nonisolated(unsafe) también merecen revisión de concurrencia.
+D. CalendarManager mantiene un tick de 1 s para avisos y ordena eventos al
+   comprobarlos. Sustituirlo por un timer para el próximo evento/refresh
+   requiere cubrir cambio de hora, suspensión, preferencias y eventos nuevos.
+   CalendarMonthView filtra eventos por cada una de las 42 celdas; con
+   calendarios grandes conviene un índice por día y proveedor.
+E. App.swift mantiene una actividad que inhibe App Nap toda la sesión.
+   Restringirla a períodos necesarios podría ahorrar energía, pero exige
+   comprobar avisos, temporizadores y detección multimedia durante inactividad.
+F. El panel expandido permanece montado al cerrar para conservar drag/drop y
+   borradores de edición. Desmontarlo sin más ahorraría memoria a costa de
+   perder esos estados. Separar estado de edición/destinos de drop antes.
+G. Persistence.save serializa y escribe JSON en main. Borrados en lote y
+   múltiples capturas pueden escribir varias veces. Cola serial/coalescing
+   con flush al terminar sería preferible; no usar debounce sin asegurar
+   durabilidad. No hay escritura por cada tecla en NotesTabView: usa borrador.
+H. Iconos NSWorkspace se solicitan durante body; evaluar con profiler antes
+   de añadir otra caché, ya que AppKit ya cachea y duplicar puede gastar RAM.
+I. Monitores de ratón: geometría/hit-testing por movimiento y lectura del
+   pasteboard de drag. Son candidatos a cachear estado por sesión de drag,
+   pero throttling agresivo perjudicaría hover/sacudidas.
+J. Observadores de NotificationCenter en gestores de vida de aplicación no
+   guardan tokens para retirarlos; relevante si se introduce recreación.
+   Settings libera su ventana al cerrar; historial de red y de navegación
+   multimedia ya están acotados. No se encontró motivo para expandir caches.
+
+Validación manual antes de integrar a dev
+Comparar ambas versiones release con las mismas preferencias/datos y apps:
+- reposo 60 s con notch cerrado, sin música ni contadores;
+- música reproduciendo, pausada y cambios rápidos de pista;
+- todas las pestañas, notas sin guardar, abrir/cerrar y arrastre de archivos;
+- capturas grandes y 50 entradas del portapapeles;
+- calendario, cambio de mes, avisos y dormir/despertar;
+- contadores simultáneos y funcionamiento después de suspensión.
+Medir CPU, memoria física/footprint y wakeups con Activity Monitor/Instruments
+en escenarios repetidos, dejando estabilizar caches. Las métricas CPU/RAM
+dentro de nnotch describen el sistema, no el consumo del propio proceso.
+Aún no hay una comparación A/B de footprint o latencia de la aplicación completa.
+La rama debe probarse antes de integrar a dev y luego main.

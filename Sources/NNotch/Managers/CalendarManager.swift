@@ -71,7 +71,7 @@ final class CalendarManager: ObservableObject {
     private var eventIntervals: [DateInterval] {
         let today = CalendarLayout.calendar.startOfDay(for: Date())
         let tomorrow = CalendarLayout.calendar.date(byAdding: .day, value: 2, to: today)!
-        return [CalendarLayout.interval(for: displayedMonth), DateInterval(start: today, end: tomorrow)]
+        return CalendarLayout.mergedIntervals([CalendarLayout.interval(for: displayedMonth), DateInterval(start: today, end: tomorrow)])
     }
 
     private func checkEventAlerts() {
@@ -228,7 +228,8 @@ final class CalendarManager: ObservableObject {
     // MARK: - EventKit Access
 
     private func updateAccessFromSystem() {
-        eventAccess = Self.access(for: .event)
+        let access = Self.access(for: .event)
+        if eventAccess != access { eventAccess = access }
     }
 
     private static func access(for entity: EKEntityType) -> Access {
@@ -273,6 +274,7 @@ final class CalendarManager: ObservableObject {
     // MARK: - Refresh & Merge
 
     func refresh() {
+        nextRefresh = Date().addingTimeInterval(60)
         updateAccessFromSystem()
         rebuildMacEvents()
         refreshExternalFeeds()
@@ -282,14 +284,14 @@ final class CalendarManager: ObservableObject {
 
     private func rebuildMacEvents() {
         guard eventAccess == .granted else {
-            macCalendars = []
+            if !macCalendars.isEmpty { macCalendars = [] }
             cachedMacEvents = []
             mergeAllEvents()
             return
         }
 
         let ekCalendars = store.calendars(for: .event)
-        macCalendars = ekCalendars.map { cal in
+        let calendars = ekCalendars.map { cal in
             let sourceTitle = cal.source?.title ?? "Mac"
             let isGoogle = sourceTitle.localizedCaseInsensitiveContains("google")
                 || sourceTitle.localizedCaseInsensitiveContains("gmail")
@@ -304,6 +306,8 @@ final class CalendarManager: ObservableObject {
             )
         }
         .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+
+        if macCalendars != calendars { macCalendars = calendars }
 
         let activeCalendars = ekCalendars.filter { !disabledMacCalendarIDs.contains($0.calendarIdentifier) }
         guard !activeCalendars.isEmpty else {
@@ -365,7 +369,10 @@ final class CalendarManager: ObservableObject {
                     req.timeoutInterval = 8
                     let (data, _) = try await URLSession.shared.data(for: req)
                     if let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) {
-                        let parsed = intervals.flatMap { Self.parseICS(text: text, feed: feed, window: $0) }
+                        let parsed = await Task.detached(priority: .utility) {
+                            intervals.flatMap { Self.parseICS(text: text, feed: feed, window: $0) }
+                        }.value
+                        guard !Task.isCancelled else { return }
                         collected.append(contentsOf: parsed)
                     }
                 } catch {
@@ -392,7 +399,7 @@ final class CalendarManager: ObservableObject {
                 deduped.append(item)
             }
         }
-        allEvents = deduped
+        if allEvents != deduped { allEvents = deduped }
     }
 
     // MARK: - Meeting Link & ICS Parser

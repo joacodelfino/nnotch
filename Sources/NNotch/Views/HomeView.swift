@@ -22,6 +22,7 @@ struct HomeView: View {
 // MARK: - Music
 
 struct MusicCard: View {
+    @EnvironmentObject private var vm: NotchViewModel
     @EnvironmentObject private var music: MusicManager
     @EnvironmentObject private var prefs: Preferences
     @State private var dragFraction: Double?
@@ -156,7 +157,7 @@ struct MusicCard: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     if playing.isPlaying && prefs.showEqualizer {
-                        EqualizerBars(playing: true, tint: .white)
+                        EqualizerBars(playing: vm.isExpanded && vm.isContentVisible, tint: .white)
                             .padding(6)
                             .background(Circle().fill(.black.opacity(0.45)))
                             .padding(7)

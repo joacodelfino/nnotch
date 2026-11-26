@@ -35,6 +35,7 @@ final class SystemStats: ObservableObject {
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sample() }
         }
+        timer.tolerance = interval * 0.1
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -82,10 +83,10 @@ final class SystemStats: ObservableObject {
 
     private func refreshBattery() {
         if let info = Self.battery() {
-            batteryLevel = info.level
-            batteryCharging = info.charging
+            if batteryLevel != info.level { batteryLevel = info.level }
+            if batteryCharging != info.charging { batteryCharging = info.charging }
         } else {
-            batteryLevel = nil
+            if batteryLevel != nil { batteryLevel = nil }
         }
     }
 

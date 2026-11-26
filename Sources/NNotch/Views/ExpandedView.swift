@@ -3,13 +3,11 @@ import SwiftUI
 /// The full island panel: header beside the notch, tab strip, active tab content.
 struct ExpandedView: View {
     @EnvironmentObject private var vm: NotchViewModel
-    @EnvironmentObject private var network: NetworkMonitor
-    @EnvironmentObject private var stats: SystemStats
     @EnvironmentObject private var prefs: Preferences
 
     var body: some View {
         VStack(spacing: 6) {
-            header
+            ExpandedHeader()
                 .frame(height: max(vm.collapsedSize.height - 4, 24))
             TabStrip()
             Group {
@@ -37,7 +35,27 @@ struct ExpandedView: View {
         }
     }
 
-    private var header: some View {
+    @ViewBuilder
+    private var content: some View {
+        switch vm.activeTab {
+        case .home: HomeView()
+        case .shelf: ShelfView()
+        case .clipboard: ClipboardView()
+        case .tools: ToolsView()
+        case .calendar: CalendarTabView()
+        case .notes: NotesTabView()
+        case .settings: SettingsQuickView()
+        }
+    }
+}
+
+/// Keep per-second network updates scoped to the header, not the entire tab.
+private struct ExpandedHeader: View {
+    @EnvironmentObject private var vm: NotchViewModel
+    @EnvironmentObject private var network: NetworkMonitor
+    @EnvironmentObject private var stats: SystemStats
+
+    var body: some View {
         HStack {
             TimelineView(.everyMinute) { context in
                 Text(context.date, format: .dateTime.weekday(.wide).day().month())
@@ -62,18 +80,6 @@ struct ExpandedView: View {
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        switch vm.activeTab {
-        case .home: HomeView()
-        case .shelf: ShelfView()
-        case .clipboard: ClipboardView()
-        case .tools: ToolsView()
-        case .calendar: CalendarTabView()
-        case .notes: NotesTabView()
-        case .settings: SettingsQuickView()
-        }
-    }
 }
 
 struct CompactStatLabelStyle: LabelStyle {

@@ -78,7 +78,7 @@ struct CollapsedView: View {
                     .foregroundStyle(.white.opacity(0.85))
             }
             if prefs.showEqualizer {
-                EqualizerBars(playing: music.nowPlaying?.isPlaying == true, tint: prefs.accentColor)
+                EqualizerBars(playing: !vm.isExpanded && music.nowPlaying?.isPlaying == true, tint: prefs.accentColor)
             }
         }
     }
@@ -134,7 +134,6 @@ struct EqualizerBars: View {
     var tint: Color = .green
     @State private var heights: [CGFloat] = [7, 12, 9]
 
-    private let timer = Timer.publish(every: 0.28, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {
@@ -145,10 +144,14 @@ struct EqualizerBars: View {
             }
         }
         .frame(height: 14, alignment: .bottom)
-        .onReceive(timer) { _ in
+        .task(id: playing) {
             guard playing else { return }
-            withAnimation(.easeInOut(duration: 0.25)) {
-                heights = heights.map { _ in CGFloat.random(in: 4...14) }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(280)) }
+                catch { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    heights = heights.map { _ in CGFloat.random(in: 4...14) }
+                }
             }
         }
     }

@@ -36,6 +36,7 @@ final class MusicManager: ObservableObject {
     private var pollInFlight = false
     private var playbackGeneration = 0
     private var lastArtworkKey = ""
+    private var artworkTask: URLSessionDataTask?
     private let scriptQueue = DispatchQueue(label: "nnotch.music", qos: .utility)
     private let artworkCache = NSCache<NSString, NSImage>()
     nonisolated(unsafe) private static let ytMetaCache = NSCache<NSString, NSDictionary>()
@@ -91,7 +92,8 @@ final class MusicManager: ObservableObject {
     ]
 
     init() {
-        artworkCache.countLimit = 48
+        artworkCache.countLimit = 12
+        artworkCache.totalCostLimit = 12 * 1024 * 1024
         Self.ytMetaCache.countLimit = 64
         scheduleTimer(interval: activeInterval)
         poll()
@@ -99,13 +101,17 @@ final class MusicManager: ObservableObject {
 
     func refresh() { poll() }
 
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        artworkTask?.cancel()
+    }
 
     private func scheduleTimer(interval: TimeInterval) {
         timer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
         }
+        timer.tolerance = interval * 0.1
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         pollInterval = interval
@@ -319,7 +325,7 @@ final class MusicManager: ObservableObject {
                     self.poll()
                     return
                 }
-                self.automationDenied = denied
+                if self.automationDenied != denied { self.automationDenied = denied }
 
                 var final = chosen
                 if let s = self.lastSeek, var f = final,
@@ -354,9 +360,11 @@ final class MusicManager: ObservableObject {
                     }
                 }
 
-                self.nowPlaying = final
-                self.webJSPermissionMissing = webJSMissingForChosen
-                self.applyPollInterval(active: final != nil)
+                if self.nowPlaying != final { self.nowPlaying = final }
+                if self.webJSPermissionMissing != webJSMissingForChosen {
+                    self.webJSPermissionMissing = webJSMissingForChosen
+                }
+                self.applyPollInterval(active: final?.isPlaying == true)
                 self.refreshArtworkIfNeeded(for: final)
             }
         }
@@ -855,11 +863,15 @@ final class MusicManager: ObservableObject {
 
     private func refreshArtworkIfNeeded(for playing: NowPlaying?) {
         guard let playing else {
-            artwork = nil
+            artworkTask?.cancel()
+            artworkTask = nil
+            if artwork != nil { artwork = nil }
             lastArtworkKey = ""
             return
         }
         guard playing.trackKey != lastArtworkKey else { return }
+        artworkTask?.cancel()
+        artworkTask = nil
         lastArtworkKey = playing.trackKey
         let key = playing.trackKey
 
@@ -871,18 +883,20 @@ final class MusicManager: ObservableObject {
         // 1. Si tenemos URL de imagen (Spotify, YouTube thumbnail, MediaSession artwork)
         if let raw = playing.artworkURL, let url = URL(string: raw) {
             let fallbackIcon = appIcon(for: playing.bundleID)
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                let loaded = data.flatMap { NSImage(data: $0) }
+            artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+                guard (error as? URLError)?.code != .cancelled else { return }
+                let loaded = data.flatMap { ImageThumbnail.make(data: $0, maxPixel: 640) }
                 Task { @MainActor in
                     guard let self else { return }
                     let finalImage = loaded ?? fallbackIcon
                     if let finalImage {
-                        self.artworkCache.setObject(finalImage, forKey: key as NSString)
+                        self.artworkCache.setObject(finalImage, forKey: key as NSString, cost: ImageThumbnail.decodedCost(finalImage))
                     }
                     guard self.lastArtworkKey == key else { return }
                     self.artwork = finalImage
                 }
-            }.resume()
+            }
+            artworkTask?.resume()
             return
         }
 
@@ -901,7 +915,7 @@ final class MusicManager: ObservableObject {
                     """
                 )
                 let img: NSImage?
-                if let data = descriptor?.data, data.count > 32, let decoded = NSImage(data: data) {
+                if let data = descriptor?.data, data.count > 32, let decoded = ImageThumbnail.make(data: data, maxPixel: 640) {
                     img = decoded
                 } else {
                     img = nil
@@ -910,7 +924,7 @@ final class MusicManager: ObservableObject {
                     guard let self else { return }
                     let finalImg = img ?? self.appIcon(for: playing.bundleID)
                     if let finalImg {
-                        self.artworkCache.setObject(finalImg, forKey: key as NSString)
+                        self.artworkCache.setObject(finalImg, forKey: key as NSString, cost: ImageThumbnail.decodedCost(finalImg))
                     }
                     guard self.lastArtworkKey == key else { return }
                     self.artwork = finalImg
@@ -922,7 +936,7 @@ final class MusicManager: ObservableObject {
         // 3. Fallback: ícono real de la aplicación o navegador que está sonando
         let icon = appIcon(for: playing.bundleID)
         if let icon {
-            artworkCache.setObject(icon, forKey: key as NSString)
+            artworkCache.setObject(icon, forKey: key as NSString, cost: ImageThumbnail.decodedCost(icon))
         }
         artwork = icon
     }
@@ -1076,7 +1090,7 @@ final class MusicManager: ObservableObject {
         if playing.isWeb {
             let previousURLFromHistory: String? = (playback == .previous) ? youtubeHistoryStack.popLast() : nil
             let recentIDs = visitedYouTubeIDs
-            scriptQueue.async {
+            scriptQueue.async { [weak self] in
                 var handled = false
                 if let appName = playing.webBrowserApp,
                    let wIdx = playing.webWindowIndex,

@@ -24,6 +24,19 @@ enum CalendarLayout {
         return DateInterval(start: days[0], end: calendar.date(byAdding: .day, value: 1, to: days[41])!)
     }
 
+    /// Avoid querying/parsing the same dates twice when the month includes today.
+    static func mergedIntervals(_ intervals: [DateInterval]) -> [DateInterval] {
+        var merged: [DateInterval] = []
+        for interval in intervals.sorted(by: { $0.start < $1.start }) {
+            if let last = merged.last, interval.start <= last.end {
+                merged[merged.count - 1] = DateInterval(start: last.start, end: max(last.end, interval.end))
+            } else {
+                merged.append(interval)
+            }
+        }
+        return merged
+    }
+
     static func occurs(_ event: CalendarEventItem, on day: Date, calendar: Calendar = calendar) -> Bool {
         let start = calendar.startOfDay(for: day)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!

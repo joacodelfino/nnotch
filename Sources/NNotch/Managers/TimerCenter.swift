@@ -50,15 +50,26 @@ final class TimerCenter: ObservableObject {
         workMinutes = work > 0 ? work : 25
         breakMinutes = rest > 0 ? rest : 5
         pomodoroRemaining = TimeInterval((work > 0 ? work : 25) * 60)
-
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     deinit { timer?.invalidate() }
+
+    /// No periodic wakeups when all three timers are stopped.
+    private func updateTimer() {
+        guard pomodoroRunning || countdownRunning || stopwatchRunning else {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
+        guard timer == nil else { return }
+        lastTick = Date()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
 
     private func tick() {
         let now = Date()
@@ -85,6 +96,7 @@ final class TimerCenter: ObservableObject {
         if stopwatchRunning {
             stopwatchElapsed += delta
         }
+        updateTimer()
     }
 
     private func advancePomodoroPhase() {
@@ -134,12 +146,15 @@ final class TimerCenter: ObservableObject {
     // MARK: - Pomodoro controls
 
     func pomodoroToggle() {
+        tick()
         pomodoroRunning.toggle()
-        lastTick = Date()
+        updateTimer()
         if pomodoroRunning { requestNotificationAuthIfNeeded() }
     }
 
     func pomodoroReset() {
+        tick()
+        defer { updateTimer() }
         pomodoroRunning = false
         pomodoroPhase = .work
         pomodoroRemaining = TimeInterval(workMinutes * 60)
@@ -149,17 +164,24 @@ final class TimerCenter: ObservableObject {
     // MARK: - Countdown controls
 
     func countdownStart() {
+        tick()
+        defer { updateTimer() }
         if countdownRemaining <= 0 {
             countdownRemaining = TimeInterval(countdownMinutes * 60)
         }
         countdownRunning = true
-        lastTick = Date()
         requestNotificationAuthIfNeeded()
     }
 
-    func countdownPause() { countdownRunning = false }
+    func countdownPause() {
+        tick()
+        countdownRunning = false
+        updateTimer()
+    }
 
     func countdownReset() {
+        tick()
+        defer { updateTimer() }
         countdownRunning = false
         countdownRemaining = 0
     }
@@ -167,11 +189,14 @@ final class TimerCenter: ObservableObject {
     // MARK: - Stopwatch controls
 
     func stopwatchToggle() {
+        tick()
         stopwatchRunning.toggle()
-        lastTick = Date()
+        updateTimer()
     }
 
     func stopwatchReset() {
+        tick()
+        defer { updateTimer() }
         stopwatchRunning = false
         stopwatchElapsed = 0
     }

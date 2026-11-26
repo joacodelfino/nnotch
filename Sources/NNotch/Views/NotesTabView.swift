@@ -46,7 +46,7 @@ struct NotesTabView: View {
                 Spacer()
             } else {
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 5) {
+                    LazyVStack(alignment: .leading, spacing: 5) {
                         ForEach(notes.notes) { note in
                             HStack(alignment: .top, spacing: 6) {
                                 if editingNoteID == note.id {
@@ -139,7 +139,7 @@ struct NotesTabView: View {
                 Spacer()
             } else {
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 5) {
+                    LazyVStack(alignment: .leading, spacing: 5) {
                         ForEach(notes.bookmarks) { bookmark in
                             HStack(spacing: 6) {
                                 Image(systemName: "link")

@@ -98,7 +98,9 @@ final class ClipboardManager: ObservableObject {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
             // Çoklu dosya kopyalandığında hepsini yakala (listede aynı sıra korunur).
-            for url in urls.reversed() {
+            var seenPaths = Set<String>()
+            let capturedURLs = urls.lazy.filter { seenPaths.insert($0.path).inserted }.prefix(maxItems)
+            for url in Array(capturedURLs).reversed() {
                 add(kind: .file, value: url.path, contentKey: "file:\(url.path)")
             }
         } else if types.contains(.tiff) || types.contains(.png),
@@ -138,6 +140,7 @@ final class ClipboardManager: ObservableObject {
 
     private func moveExistingToFront(contentKey: String) -> Bool {
         guard let index = items.firstIndex(where: { $0.contentKey == contentKey }) else { return false }
+        guard index != 0 else { return true }
         let item = items.remove(at: index)
         items.insert(item, at: 0)
         persist()

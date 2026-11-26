@@ -110,10 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// gerektiğinde örneklenir — boşta CPU tüketimini azaltır.
     private func observeVisibility() {
         // Tek kaynak: iki tercihi de taze değerleriyle birlikte okur (kural bir yerde).
-        Publishers.CombineLatest3(viewModel.$isExpanded, prefs.$collapsedLeft, prefs.$collapsedRight)
-            .sink { [weak self] expanded, left, right in
+        Publishers.CombineLatest4(viewModel.$isExpanded, viewModel.$activeTab, prefs.$collapsedLeft, prefs.$collapsedRight)
+            .sink { [weak self] expanded, tab, left, right in
                 guard let self else { return }
-                self.stats.setActive(expanded || [left, right].contains(.cpu) || [left, right].contains(.memory))
+                let showsStats = expanded ? (tab == .home || tab == .tools) : [left, right].contains { $0 == .cpu || $0 == .memory }
+                self.stats.setActive(showsStats)
                 self.network.setActive(expanded || left == .network || right == .network)
             }
             .store(in: &cancellables)

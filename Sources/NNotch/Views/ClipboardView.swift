@@ -82,7 +82,6 @@ private struct ClipboardRow: View {
         cache.countLimit = 60
         return cache
     }()
-    private static let thumbnailMaxPixel: CGFloat = 128
 
     var body: some View {
         HStack(spacing: 8) {
@@ -182,13 +181,11 @@ private struct ClipboardRow: View {
         }
         switch item.kind {
         case .image:
-            // Görsel verisini main dışında oku (Data Sendable); küçültme main'de
-            // ImageIO ile (tam boyutu decode etmeden thumbnail üretir, hızlıdır).
-            let path = item.value
-            let data = await Task.detached(priority: .utility) {
-                try? Data(contentsOf: URL(fileURLWithPath: path))
+            let url = URL(fileURLWithPath: item.value)
+            let image = await Task.detached(priority: .utility) {
+                ImageThumbnail.make(url: url, maxPixel: 128)
             }.value
-            guard let data, let image = Self.downsampledImage(data: data, maxPixel: Self.thumbnailMaxPixel) else { return }
+            guard !Task.isCancelled, let image else { return }
             Self.thumbnailCache.setObject(image, forKey: key)
             thumbnail = image
         case .file:
@@ -199,18 +196,6 @@ private struct ClipboardRow: View {
         default:
             break
         }
-    }
-
-    /// Görsel verisinden en fazla `maxPixel` kenarlı bir thumbnail üretir (tam boyutu decode etmez).
-    private static func downsampledImage(data: Data, maxPixel: CGFloat) -> NSImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-        ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 
     private func iconPreview(_ symbol: String, tint: Color) -> some View {
@@ -230,7 +215,7 @@ private struct ClipboardRow: View {
         case .image:
             return "Imagen"
         case .text, .link:
-            return item.value
+            return String(item.value.prefix(512))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\n", with: " ")
         }
