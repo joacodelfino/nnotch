@@ -14,30 +14,28 @@ enum AppInfo {
 final class Preferences: ObservableObject {
     static let shared = Preferences()
 
-    enum CollapsedLeftContent: String, CaseIterable, Identifiable {
-        case clock, date, hidden
+    enum CollapsedContent: String, CaseIterable, Identifiable {
+        case auto, clock, date, weekday, battery, music, network, cpu, memory, timer, hidden
         var id: String { rawValue }
         var title: String {
             switch self {
+            case .auto: return "Automático"
             case .clock: return "Hora"
             case .date: return "Fecha"
+            case .weekday: return "Día de la semana"
+            case .battery: return "Batería"
+            case .music: return "Música"
+            case .network: return "Red"
+            case .cpu: return "CPU"
+            case .memory: return "RAM"
+            case .timer: return "Temporizador"
             case .hidden: return "Vacío"
             }
         }
     }
 
-    enum CollapsedRightContent: String, CaseIterable, Identifiable {
-        case auto, battery, network, hidden
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .auto: return "Auto"
-            case .battery: return "Batería"
-            case .network: return "Red"
-            case .hidden: return "Vacío"
-            }
-        }
-    }
+    typealias CollapsedLeftContent = CollapsedContent
+    typealias CollapsedRightContent = CollapsedContent
 
     enum IslandSizeMode: String, CaseIterable, Identifiable {
         case compact, normal, large, custom

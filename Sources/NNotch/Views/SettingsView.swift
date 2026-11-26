@@ -316,22 +316,29 @@ private struct AppearanceSettings: View {
             }
 
             SettingsCard("Indicadores al Lado del Notch") {
+                Text("Elegí qué mostrar en cada lado. Automático prioriza el temporizador activo, luego la música y finalmente la batería.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 SettingsControlRow("Lado izquierdo") {
-                    SegmentedPills(
-                        options: Preferences.CollapsedLeftContent.allCases.map { ($0, $0.title) },
-                        selection: $prefs.collapsedLeft,
-                        accent: prefs.accentColor
-                    )
+                    Picker("Lado izquierdo", selection: $prefs.collapsedLeft) {
+                        ForEach(Preferences.CollapsedContent.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 190)
                 }
 
                 Divider().overlay(Color.white.opacity(0.06))
 
                 SettingsControlRow("Lado derecho") {
-                    SegmentedPills(
-                        options: Preferences.CollapsedRightContent.allCases.map { ($0, $0.title) },
-                        selection: $prefs.collapsedRight,
-                        accent: prefs.accentColor
-                    )
+                    Picker("Lado derecho", selection: $prefs.collapsedRight) {
+                        ForEach(Preferences.CollapsedContent.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 190)
                 }
 
                 Divider().overlay(Color.white.opacity(0.06))
@@ -713,19 +720,8 @@ private struct CollapsedPreview: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Group {
-                switch prefs.collapsedLeft {
-                case .clock:
-                    Text(Date(), format: .dateTime.hour().minute())
-                case .date:
-                    Text(Date(), format: .dateTime.day().month(.abbreviated))
-                case .hidden:
-                    Color.clear
-                }
-            }
-            .font(.caption.monospacedDigit().weight(.medium))
-            .foregroundStyle(.white.opacity(0.85))
-            .frame(width: 68)
+            preview(prefs.collapsedLeft)
+                .frame(width: 68)
 
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(Color.white.opacity(0.06))
@@ -737,34 +733,8 @@ private struct CollapsedPreview: View {
                 )
                 .padding(.vertical, 3)
 
-            Group {
-                switch prefs.collapsedRight {
-                case .auto:
-                    HStack(spacing: 4) {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.white.opacity(0.85))
-                        if prefs.showEqualizer {
-                            EqualizerBars(playing: true, tint: prefs.accentColor)
-                        }
-                    }
-                case .battery:
-                    HStack(spacing: 3) {
-                        Text("%84")
-                            .font(.caption.monospacedDigit().weight(.medium))
-                        Image(systemName: "battery.75")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundStyle(.white.opacity(0.85))
-                case .network:
-                    Text("↓ 1.2 MB/s")
-                        .font(.system(size: 8).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.75))
-                case .hidden:
-                    Color.clear
-                }
-            }
-            .frame(width: 68)
+            preview(prefs.collapsedRight)
+                .frame(width: 68)
         }
         .frame(height: 30)
         .background(
@@ -775,6 +745,32 @@ private struct CollapsedPreview: View {
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
         )
     }
+    @ViewBuilder
+    private func preview(_ content: Preferences.CollapsedContent) -> some View {
+        Group {
+            switch content {
+            case .clock: Text(Date(), format: .dateTime.hour().minute())
+            case .date: Text(Date(), format: .dateTime.day().month(.abbreviated))
+            case .weekday: Text(Date(), format: .dateTime.weekday(.abbreviated))
+            case .auto, .music:
+                HStack(spacing: 4) {
+                    Image(systemName: "music.note")
+                    if prefs.showEqualizer { EqualizerBars(playing: true, tint: prefs.accentColor) }
+                }
+            case .battery: Label("84%", systemImage: "battery.75")
+            case .network: Text("↓ 1.2 MB/s")
+            case .cpu: Text("CPU 12%")
+            case .memory: Text("RAM 48%")
+            case .timer: Label("24:59", systemImage: "timer")
+            case .hidden: Color.clear
+            }
+        }
+        .font(.system(size: 10).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.85))
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+    }
+
 }
 
 struct MiniIslandGlyph: View {

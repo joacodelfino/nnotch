@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// Content flanking the physical notch while collapsed.
 /// Both zones are user-configurable from Settings.
@@ -12,64 +13,55 @@ struct CollapsedView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            leftZone
+            indicator(prefs.collapsedLeft)
                 .frame(width: 74)
             Spacer(minLength: 8)
-            rightZone
+            indicator(prefs.collapsedRight)
                 .frame(width: 74)
         }
         .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Left
-
     @ViewBuilder
-    private var leftZone: some View {
-        if let badge = timers.collapsedBadge {
-            Text(badge)
-                .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(prefs.accentColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        } else {
-            switch prefs.collapsedLeft {
+    private func indicator(_ content: Preferences.CollapsedContent) -> some View {
+        Group {
+            switch content {
+            case .auto:
+                if let badge = timers.collapsedBadge {
+                    Label(badge, systemImage: "timer")
+                } else if music.nowPlaying?.isPlaying == true {
+                    musicMini
+                } else {
+                    batteryMini
+                }
             case .clock:
                 TimelineView(.everyMinute) { context in
                     Text(context.date, format: .dateTime.hour().minute())
-                        .font(.caption.monospacedDigit().weight(.medium))
-                        .foregroundStyle(.white.opacity(0.85))
                 }
             case .date:
                 TimelineView(.everyMinute) { context in
                     Text(context.date, format: .dateTime.day().month(.abbreviated))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.85))
                 }
-            case .hidden:
-                Color.clear
+            case .weekday:
+                TimelineView(.everyMinute) { context in
+                    Text(context.date, format: .dateTime.weekday(.abbreviated))
+                }
+            case .battery: batteryMini
+            case .music: musicMini
+            case .network: networkMini
+            case .cpu: Text("CPU \(Int(stats.cpuUsage * 100))%")
+            case .memory: Text("RAM \(Int(stats.memoryUsage * 100))%")
+            case .timer:
+                Label(timers.collapsedBadge ?? "—", systemImage: "timer")
+            case .hidden: Color.clear
             }
         }
-    }
-
-    // MARK: - Right
-
-    @ViewBuilder
-    private var rightZone: some View {
-        switch prefs.collapsedRight {
-        case .auto:
-            if let playing = music.nowPlaying, playing.isPlaying {
-                musicMini
-            } else {
-                batteryMini
-            }
-        case .battery:
-            batteryMini
-        case .network:
-            networkMini
-        case .hidden:
-            Color.clear
-        }
+        .font(.caption.monospacedDigit().weight(.medium))
+        .foregroundStyle(.white.opacity(0.85))
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .help(content.title)
     }
 
     private var musicMini: some View {
@@ -86,7 +78,7 @@ struct CollapsedView: View {
                     .foregroundStyle(.white.opacity(0.85))
             }
             if prefs.showEqualizer {
-                EqualizerBars(playing: true, tint: prefs.accentColor)
+                EqualizerBars(playing: music.nowPlaying?.isPlaying == true, tint: prefs.accentColor)
             }
         }
     }
