@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Dedicated tab for short personal reminders (up to 12 hours ahead) with 2-stage notch alerts
+/// Dedicated tab for short personal reminders (up to 12 hours ahead) with 2-stage inline notch alerts
 /// (15m pre-alert + sticky alert at the exact scheduled time).
 struct RemindersTabView: View {
     @EnvironmentObject private var reminders: ReminderStore
@@ -28,12 +28,11 @@ struct RemindersTabView: View {
     }
 
     private var relativeLabel: String {
-        let total = Int(offsetMinutes.rounded())
-        let h = total / 60
-        let m = total % 60
-        if h == 0 { return "en \(m) min" }
-        if m == 0 { return "en \(h) h" }
-        return "en \(h) h \(m) min"
+        Self.formatRelative(minutes: Int(offsetMinutes.rounded()))
+    }
+
+    private var canSubmit: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var pendingCount: Int {
@@ -45,136 +44,168 @@ struct RemindersTabView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            composerColumn
-                .frame(width: 256)
+        HStack(spacing: 10) {
+            composerCard
+                .frame(width: 268)
 
-            Divider().overlay(Color.white.opacity(0.08))
-
-            listColumn
+            listCard
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .islandCard()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Left: Composer
+    // MARK: - Left Card: Composer
 
-    private var composerColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            CardTitle("Nuevo recordatorio", symbol: "bell.badge.fill", tint: .orange)
+    private var composerCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                CardTitle("Nuevo recordatorio", symbol: "bell.badge.fill", tint: .orange)
+                Spacer()
+                Menu {
+                    Button("Probar aviso 15 min antes") {
+                        vm.collapseNow()
+                        vm.showNotchAlerts([
+                            NotchAlertItem(
+                                id: "preview-15m-\(UUID().uuidString)",
+                                title: "Reunión de equipo",
+                                scheduledDate: Date().addingTimeInterval(15 * 60),
+                                stage: .upcoming15m,
+                                colorHex: "#FF9F0A",
+                                sourceLabel: "Recordatorio",
+                                meetingURL: nil,
+                                reminderID: nil
+                            )
+                        ])
+                    }
+                    Button("Probar aviso fijo a la hora") {
+                        vm.collapseNow()
+                        vm.showNotchAlerts([
+                            NotchAlertItem(
+                                id: "preview-due-\(UUID().uuidString)",
+                                title: "Llamar ahora",
+                                scheduledDate: Date(),
+                                stage: .dueNow,
+                                colorHex: "#FF9F0A",
+                                sourceLabel: "Recordatorio",
+                                meetingURL: nil,
+                                reminderID: nil
+                            )
+                        ])
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "play.circle")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Probar")
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Capsule().fill(Color.white.opacity(0.07)))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Probar cómo aparece el aviso en el notch")
+            }
 
-            TextField("¿Qué te recuerdo?", text: $title)
-                .textFieldStyle(.plain)
-                .font(.caption)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
-                .onSubmit { submit() }
+            HStack(spacing: 7) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange.opacity(0.85))
+                TextField("¿Qué te recuerdo?", text: $title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white)
+                    .onSubmit { submit() }
+                if !title.isEmpty {
+                    Button { title = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.35))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.07))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(canSubmit ? Color.orange.opacity(0.45) : Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
 
-            timeSelectorCard
+            timeSelectorBox
+
+            Spacer(minLength: 0)
 
             Button {
                 submit()
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Programar aviso")
-                        .font(.caption.weight(.semibold))
+                    Image(systemName: "bell.badge.plus.fill")
+                        .font(.system(size: 10.5, weight: .semibold))
+                    Text("Programar para las \(targetDate.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 }
-                .foregroundStyle(title.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.45) : Color.black)
+                .foregroundStyle(canSubmit ? Color.black : Color.white.opacity(0.4))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 6.5)
+                .padding(.vertical, 7.5)
                 .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(title.trimmingCharacters(in: .whitespaces).isEmpty ? Color.white.opacity(0.1) : Color.orange)
+                    Capsule().fill(canSubmit ? Color.orange : Color.white.opacity(0.09))
                 )
+                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
-            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: 6) {
-                Text("Probar:")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.35))
-                Button("15 min antes") {
-                    vm.collapseNow()
-                    vm.showNotchAlerts([
-                        NotchAlertItem(
-                            id: "preview-15m-\(UUID().uuidString)",
-                            title: "Ejemplo: Reunión de equipo",
-                            scheduledDate: Date().addingTimeInterval(15 * 60),
-                            stage: .upcoming15m,
-                            colorHex: "#FF9F0A",
-                            sourceLabel: "Recordatorio",
-                            meetingURL: nil,
-                            reminderID: nil
-                        )
-                    ])
-                }
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundStyle(.orange)
-                .buttonStyle(.plain)
-
-                Text("·").foregroundStyle(.white.opacity(0.25))
-
-                Button("A la hora (fijo)") {
-                    vm.collapseNow()
-                    vm.showNotchAlerts([
-                        NotchAlertItem(
-                            id: "preview-due-\(UUID().uuidString)",
-                            title: "Ejemplo: Llamar ahora",
-                            scheduledDate: Date(),
-                            stage: .dueNow,
-                            colorHex: "#FF9F0A",
-                            sourceLabel: "Recordatorio",
-                            meetingURL: nil,
-                            reminderID: nil
-                        )
-                    ])
-                }
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundStyle(prefs.accentColor)
-                .buttonStyle(.plain)
-            }
+            .buttonStyle(IslandButtonStyle())
+            .disabled(!canSubmit)
         }
+        .islandCard()
     }
 
-    private var timeSelectorCard: some View {
+    private var timeSelectorBox: some View {
         VStack(spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
-                adjustButton(symbol: "minus", label: "Restar 5 minutos") {
+            HStack(spacing: 10) {
+                adjustCircleButton(symbol: "minus", label: "Restar 5 minutos") {
                     offsetMinutes = max(minMinutes, offsetMinutes - 5)
                 }
 
                 VStack(spacing: 1) {
                     Text(targetDate.formatted(date: .omitted, time: .shortened))
-                        .font(.system(size: 24, weight: .semibold, design: .rounded).monospacedDigit())
+                        .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundStyle(.white)
-                    Text(relativeLabel)
-                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.orange)
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 8.5, weight: .semibold))
+                        Text(relativeLabel)
+                            .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                    }
+                    .foregroundStyle(.orange)
                 }
                 .frame(maxWidth: .infinity)
 
-                adjustButton(symbol: "plus", label: "Sumar 5 minutos") {
+                adjustCircleButton(symbol: "plus", label: "Sumar 5 minutos") {
                     offsetMinutes = min(maxMinutes, offsetMinutes + 5)
                 }
             }
 
-            Slider(value: $offsetMinutes, in: minMinutes...maxMinutes, step: 5)
-                .tint(.orange)
-                .controlSize(.mini)
+            VStack(spacing: 3) {
+                Slider(value: $offsetMinutes, in: minMinutes...maxMinutes, step: 5)
+                    .tint(.orange)
+                    .controlSize(.mini)
+                HStack {
+                    Text("5m")
+                    Spacer()
+                    Text("6h")
+                    Spacer()
+                    Text("12h")
+                }
+                .font(.system(size: 8, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.32))
+            }
 
             HStack(spacing: 4) {
                 ForEach(quickPresets, id: \.label) { preset in
@@ -186,9 +217,9 @@ struct RemindersTabView: View {
                     } label: {
                         Text(preset.label)
                             .font(.system(size: 9, weight: active ? .bold : .medium).monospacedDigit())
-                            .foregroundStyle(active ? Color.black : Color.white.opacity(0.7))
+                            .foregroundStyle(active ? Color.black : Color.white.opacity(0.68))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 3.5)
+                            .padding(.vertical, 4)
                             .background(
                                 Capsule().fill(active ? Color.orange : Color.white.opacity(0.07))
                             )
@@ -198,23 +229,23 @@ struct RemindersTabView: View {
                 }
             }
         }
-        .padding(9)
+        .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.045))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
                 )
         )
     }
 
-    private func adjustButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    private func adjustCircleButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white.opacity(0.85))
-                .frame(width: 24, height: 24)
+                .frame(width: 26, height: 26)
                 .background(Circle().fill(Color.white.opacity(0.1)))
                 .contentShape(Circle())
         }
@@ -230,19 +261,34 @@ struct RemindersTabView: View {
         offsetMinutes = 30
     }
 
-    // MARK: - Right: List
+    // MARK: - Right Card: List
 
-    private var listColumn: some View {
+    private var listCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                CardTitle("Recordatorios · \(pendingCount)", symbol: "checklist", tint: .white.opacity(0.75))
+                CardTitle("Próximos", symbol: "checklist", tint: .white.opacity(0.8))
+                if pendingCount > 0 {
+                    Text("\(pendingCount)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.orange.opacity(0.16)))
+                }
                 Spacer()
                 if hasCompleted {
-                    Button("Limpiar hechos") {
-                        reminders.clearCompleted()
+                    Button {
+                        withAnimation(Motion.quick) {
+                            reminders.clearCompleted()
+                        }
+                    } label: {
+                        Text("Limpiar hechos")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Capsule().fill(Color.white.opacity(0.07)))
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.55))
                     .buttonStyle(.plain)
                 }
             }
@@ -250,16 +296,22 @@ struct RemindersTabView: View {
             if reminders.reminders.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
-                    Image(systemName: "bell.badge")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.white.opacity(0.22))
+                    ZStack {
+                        Circle()
+                            .fill(Color.orange.opacity(0.1))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "bell.badge")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(.orange.opacity(0.75))
+                    }
                     Text("Sin recordatorios pendientes")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                    Text("Elegí un lapso de hasta 12 h para recibir aviso 15 min antes y fijo a la hora exacta")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.32))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                    Text("Avisa 15 min antes al costado del notch y vuelve fijo a la hora exacta hasta que lo saques.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.38))
                         .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
@@ -267,62 +319,108 @@ struct RemindersTabView: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 6) {
                         ForEach(reminders.reminders) { item in
-                            reminderRow(item)
+                            ReminderCardRow(
+                                item: item,
+                                accent: prefs.accentColor,
+                                onToggle: { reminders.toggleCompleted(item.id) },
+                                onDelete: { reminders.remove(item.id) }
+                            )
                         }
                     }
                 }
             }
         }
+        .islandCard()
     }
 
-    private func reminderRow(_ item: ReminderItem) -> some View {
-        let isPast = !item.isCompleted && item.scheduledDate < Date()
-        return HStack(spacing: 8) {
-            Button {
-                reminders.toggleCompleted(item.id)
-            } label: {
+    static func formatRelative(minutes: Int) -> String {
+        let clamped = max(minutes, 0)
+        let h = clamped / 60
+        let m = clamped % 60
+        if h == 0 { return "en \(m) min" }
+        if m == 0 { return "en \(h) h" }
+        return "en \(h) h \(m) min"
+    }
+}
+
+private struct ReminderCardRow: View {
+    let item: ReminderItem
+    let accent: Color
+    let onToggle: () -> Void
+    let onDelete: () -> Void
+    @State private var hovering = false
+
+    private var remainingMinutes: Int {
+        Int(ceil(item.scheduledDate.timeIntervalSinceNow / 60))
+    }
+
+    private var isPast: Bool {
+        !item.isCompleted && item.scheduledDate < Date()
+    }
+
+    private var statusColor: Color {
+        if item.isCompleted { return accent }
+        return isPast ? .red : .orange
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(statusColor.opacity(item.isCompleted ? 0.4 : 0.9))
+                .frame(width: 3, height: 28)
+
+            Button(action: onToggle) {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(item.isCompleted ? prefs.accentColor : .orange)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(item.isCompleted ? accent : .white.opacity(0.45))
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2.5) {
                 Text(item.title)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(item.isCompleted ? .white.opacity(0.38) : .white.opacity(0.92))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(item.isCompleted ? .white.opacity(0.35) : .white.opacity(0.92))
                     .strikethrough(item.isCompleted)
                     .lineLimit(2)
 
                 HStack(spacing: 5) {
                     Text(item.scheduledDate.formatted(date: .omitted, time: .shortened))
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(isPast ? .red.opacity(0.85) : .orange.opacity(0.9))
-                    if isPast {
-                        Text("· Vencido")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(.red)
+                        .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(statusColor)
+                        .padding(.horizontal, 5.5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(statusColor.opacity(0.14)))
+
+                    if !item.isCompleted {
+                        Text(isPast ? "Vencido" : RemindersTabView.formatRelative(minutes: remainingMinutes))
+                            .font(.system(size: 9, weight: .medium).monospacedDigit())
+                            .foregroundStyle(isPast ? .red.opacity(0.85) : .white.opacity(0.48))
+                    } else {
+                        Text("Completado")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.white.opacity(0.35))
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                reminders.remove(item.id)
-            } label: {
+            Button(action: onDelete) {
                 Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.35))
-                    .padding(4)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(hovering ? .red.opacity(0.85) : .white.opacity(0.28))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(hovering ? Color.red.opacity(0.12) : Color.clear))
             }
             .buttonStyle(.plain)
             .help("Eliminar recordatorio")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(item.isCompleted ? 0.025 : 0.055))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(item.isCompleted ? 0.025 : (hovering ? 0.08 : 0.05)))
         )
+        .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
     }
 }
