@@ -58,12 +58,24 @@
 
 ---
 
-## Requisitos
+## Descargar e instalar
 
-- **macOS 14.0 (Sonoma)** o superior (Apple Silicon `arm64`).
-- **Command Line Tools de Xcode** (`xcode-select --install`). No requiere descargar Xcode completo.
+[Descargar nnotch 0.6.1 para Apple Silicon](https://github.com/joacodelfino/nnotch/releases/download/v0.6.1/nnotch-0.6.1-arm64.dmg)
 
----
+Requiere una Mac con Apple Silicon (M1 o posterior) y macOS 14 o posterior.
+
+1. Descargá y abrí el archivo DMG.
+2. Arrastrá **nnotch** a **Aplicaciones**.
+3. Abrí nnotch desde Aplicaciones y expulsá el DMG.
+
+Esta versión tiene firma local y todavía no está notarizada por Apple. macOS puede bloquear el primer inicio. Si descargaste la app desde esta release, podés autorizarla en **Configuración del Sistema → Privacidad y seguridad → Abrir igualmente** después de intentar abrirla.
+
+Podés verificar la descarga con el archivo SHA-256 adjunto a la release. Las actualizaciones se instalan descargando la nueva versión y reemplazando la app en Aplicaciones después de cerrarla.
+
+## Compilar desde el código
+
+Para compilar se necesitan las Command Line Tools de Xcode (`xcode-select --install`).
+Para generar el instalador ejecutá `bash scripts/build-dmg.sh`.
 
 ## Instalación y compilación
 
