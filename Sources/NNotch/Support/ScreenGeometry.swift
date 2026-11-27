@@ -45,11 +45,16 @@ extension NSScreen {
         )
     }
 
-    /// Size of the collapsed island. Matches the physical notch when present,
-    /// otherwise a simulated Dynamic Island pill.
+    /// Size of the collapsed island, including a small overlap at the bottom
+    /// of the camera housing. The safe-area boundary can leave its physical
+    /// lower edge visible beneath the rendered island.
+    /// Screens without a notch retain the simulated Dynamic Island size.
     var islandSize: CGSize {
         if let notch = notchRect {
-            return CGSize(width: notch.width, height: notch.height)
+            let bottomOverlap: CGFloat = 1
+            let scale = max(backingScaleFactor, 1)
+            let height = ceil((notch.height + bottomOverlap) * scale) / scale
+            return CGSize(width: notch.width, height: height)
         }
         let menuBarHeight = frame.maxY - visibleFrame.maxY
         return CGSize(width: 196, height: max(menuBarHeight, 30))
