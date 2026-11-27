@@ -510,14 +510,6 @@ final class CalendarManager: ObservableObject {
     }
 
     nonisolated static func parseICS(text: String, feed: ExternalCalendarFeed, window: DateInterval? = nil) -> [CalendarEventItem] {
-        // Desplegar líneas plegadas RFC 5545 (CRLF + espacio/tab)
-        let unfolded = text
-            .replacingOccurrences(of: "\r\n ", with: "")
-            .replacingOccurrences(of: "\r\n\t", with: "")
-            .replacingOccurrences(of: "\n ", with: "")
-            .replacingOccurrences(of: "\n\t", with: "")
-
-        let lines = unfolded.components(separatedBy: .newlines)
         let cal = Calendar.current
         let windowStart = window?.start ?? cal.startOfDay(for: Date())
         let windowEnd = window?.end ?? cal.date(byAdding: .day, value: 14, to: windowStart)!
@@ -534,7 +526,24 @@ final class CalendarManager: ObservableObject {
         var dtEnd: Date?
         var isAllDay = false
 
-        for line in lines {
+        // Consume physical lines as slices of the feed. Only folded properties
+        // need a buffer spanning multiple lines.
+        var remaining = text[...]
+        func nextLine() -> Substring {
+            let end = remaining.firstIndex(where: \.isNewline) ?? remaining.endIndex
+            let line = remaining[..<end]
+            remaining = end == remaining.endIndex ? remaining[end...] : remaining[remaining.index(after: end)...]
+            return line
+        }
+        while !remaining.isEmpty {
+            var line = nextLine()
+            if remaining.first == " " || remaining.first == "\t" {
+                var unfolded = String(line)
+                repeat {
+                    unfolded.append(contentsOf: nextLine().dropFirst())
+                } while remaining.first == " " || remaining.first == "\t"
+                line = unfolded[...]
+            }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed == "BEGIN:VEVENT" {
                 inEvent = true

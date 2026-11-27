@@ -36,7 +36,7 @@ final class MusicManager: ObservableObject {
     private var pollInFlight = false
     private var playbackGeneration = 0
     private var lastArtworkKey = ""
-    private var artworkTask: URLSessionDataTask?
+    private var artworkTask: URLSessionDownloadTask?
     private let scriptQueue = DispatchQueue(label: "nnotch.music.poll", qos: .utility)
     /// Dedicated high-priority queue for user playback/seek/focus commands so a slow poll never delays clicks.
     private let controlQueue = DispatchQueue(label: "nnotch.music.control", qos: .userInitiated)
@@ -910,9 +910,9 @@ final class MusicManager: ObservableObject {
         // 1. Si tenemos URL de imagen (Spotify, YouTube thumbnail, MediaSession artwork)
         if let raw = playing.artworkURL, let url = URL(string: raw) {
             let fallbackIcon = appIcon(for: playing.bundleID)
-            artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            artworkTask = URLSession.shared.downloadTask(with: url) { [weak self] file, _, error in
                 guard (error as? URLError)?.code != .cancelled else { return }
-                let loaded = data.flatMap { ImageThumbnail.make(data: $0, maxPixel: 640) }
+                let loaded = file.flatMap { ImageThumbnail.make(url: $0, maxPixel: 640) }
                 Task { @MainActor in
                     guard let self else { return }
                     let finalImage = loaded ?? fallbackIcon

@@ -75,7 +75,7 @@ private struct ClipboardRow: View {
     @State private var thumbnail: NSImage?
 
     /// Küçük resimler yol başına bir kez yüklenip önbelleğe alınır; her satır
-    /// yeniden çiziminde disk okumayı önler. ~128px'e küçültülür ve sayı sınırlıdır,
+    /// yeniden çiziminde disk okumayı önler. ~64px'e küçültülür ve sayı sınırlıdır,
     /// böylece tam çözünürlüklü ekran görüntüleri belleği şişirmez.
     private static let thumbnailCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
@@ -183,7 +183,7 @@ private struct ClipboardRow: View {
         case .image:
             let url = URL(fileURLWithPath: item.value)
             let image = await Task.detached(priority: .utility) {
-                ImageThumbnail.make(url: url, maxPixel: 128)
+                ImageThumbnail.make(url: url, maxPixel: 64)
             }.value
             guard !Task.isCancelled, let image else { return }
             Self.thumbnailCache.setObject(image, forKey: key)
@@ -191,7 +191,6 @@ private struct ClipboardRow: View {
         case .file:
             // Dosya ikonu sistem önbelleğinden gelir, ucuz — doğrudan main'de.
             let image = NSWorkspace.shared.icon(forFile: item.value)
-            Self.thumbnailCache.setObject(image, forKey: key)
             thumbnail = image
         default:
             break
